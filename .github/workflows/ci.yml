@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python-version: "3.9"
+          - os: ubuntu-24.04
+            python-version: "3.10"
+          - os: ubuntu-24.04
+            python-version: "3.11"
+          - os: ubuntu-24.04
+            python-version: "3.12"
+          - os: ubuntu-24.04
+            python-version: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Tests
+        run: pytest
+
+      - name: Serve smoke test
+        run: |
+          python -m netriage serve --host 127.0.0.1 --port 8123 &
+          SERVER_PID=$!
+          sleep 2
+          curl -fsS http://127.0.0.1:8123/api/health
+          curl -fsS -o /dev/null -w "download=%{size_download}\n" "http://127.0.0.1:8123/api/download?mb=1"
+          curl -fsS -o /dev/null -w "page=%{http_code}\n" http://127.0.0.1:8123/
+          kill $SERVER_PID
+
+      - name: Install as package
+        run: |
+          pip install .
+          netriage version
