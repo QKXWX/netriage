@@ -196,6 +196,23 @@ def probe(server, download_mb=8.0, upload_mb=4.0, ping_count=10, timeout=30.0,
     if valid_load and loaded and loaded["avg_ms"] is not None and idle["avg_ms"] is not None:
         bufferbloat = round(max(0.0, loaded["avg_ms"] - idle["avg_ms"]), 2)
 
+    # 上行方向的队列同样会顶爆延迟：按实测上行速率放大到约 1.2 秒，再测一次上行满载
+    up_load_mb = min(float(load_cap_mb), max(2.0, up["mbps"] * 1.2 / 8))
+    up_samples = []
+    up_stop = threading.Event()
+    up_watcher = threading.Thread(target=_loaded_ping, args=(server, up_stop, up_samples), daemon=True)
+    up_watcher.start()
+    try:
+        up_load = upload(server, up_load_mb, timeout=timeout)
+    finally:
+        up_stop.set()
+        up_watcher.join(timeout=5)
+    loaded_up = summarize_ping(up_samples) if up_samples else None
+    valid_up_load = up_load["seconds"] >= 0.8
+    bufferbloat_up = None
+    if valid_up_load and loaded_up and loaded_up["avg_ms"] is not None and idle["avg_ms"] is not None:
+        bufferbloat_up = round(max(0.0, loaded_up["avg_ms"] - idle["avg_ms"]), 2)
+
     return {
         "down_mbps": multi["mbps"] if multi_valid else single["mbps"],
         "up_mbps": up["mbps"],
@@ -207,6 +224,9 @@ def probe(server, download_mb=8.0, upload_mb=4.0, ping_count=10, timeout=30.0,
         "latency_loaded_max_ms": loaded["max_ms"] if valid_load and loaded else None,
         "bufferbloat_ms": bufferbloat,
         "bufferbloat_valid": valid_load,
+        "latency_loaded_up_ms": loaded_up["avg_ms"] if valid_up_load and loaded_up else None,
+        "bufferbloat_up_ms": bufferbloat_up,
+        "bufferbloat_up_valid": valid_up_load,
         "load_seconds": multi["seconds"],
         "jitter_ms": idle["jitter_ms"],
         "loss_pct": idle["loss_pct"],
@@ -217,6 +237,8 @@ def probe(server, download_mb=8.0, upload_mb=4.0, ping_count=10, timeout=30.0,
         "down_mb": round(single["bytes"] / 1024 / 1024, 2),
         "load_mb": round(multi["bytes"] / 1024 / 1024, 2),
         "up_mb": round(up["bytes"] / 1024 / 1024, 2),
+        "up_load_mb": round(up_load["bytes"] / 1024 / 1024, 2),
+        "up_load_seconds": up_load["seconds"],
         "up_server_mbps": up["server_mbps"],
         "measured_at": datetime.datetime.now().replace(microsecond=0).isoformat(),
         "target": server,

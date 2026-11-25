@@ -66,6 +66,13 @@ def _print_measure(measure, server):
     print("  空闲 %s ms · 满载 %s" % (measure["latency_idle_ms"], loaded_text))
     print("  上行 %s Mbps（%s MB / %ss，服务端统计 %s）" % (
         measure["up_mbps"], measure.get("up_mb"), measure["up_seconds"], measure["up_server_mbps"]))
+    up_loaded = measure.get("latency_loaded_up_ms")
+    if up_loaded is None:
+        print("  上行满载 未测（负载 %s MB / %ss，太短）" % (
+            measure.get("up_load_mb"), measure.get("up_load_seconds")))
+    else:
+        print("  上行满载 %s ms · bufferbloat %s ms（负载 %s MB）" % (
+            up_loaded, measure.get("bufferbloat_up_ms"), measure.get("up_load_mb")))
     print("  抖动 %s ms · 丢包 %s%%" % (measure["jitter_ms"], measure["loss_pct"]))
     print("")
 

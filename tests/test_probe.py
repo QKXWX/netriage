@@ -99,3 +99,15 @@ def test_watch_does_not_alert_when_healthy(server, monkeypatch):
           download_mb=0.3, upload_mb=0.15, ping_count=3, load_cap_mb=2, sleep=lambda _: None,
           webhook="http://example.test/hook", alert_health=0, alert_cooldown=0)
     assert sent == []
+
+
+def test_probe_measures_upload_bufferbloat_fields(server):
+    base, _ = server
+    measure = probe(base, download_mb=0.4, upload_mb=0.2, ping_count=3, load_cap_mb=2)
+    assert "latency_loaded_up_ms" in measure
+    assert "bufferbloat_up_ms" in measure
+    assert measure["up_load_mb"] >= 2
+    if measure["latency_loaded_up_ms"] is not None:
+        assert measure["latency_loaded_up_ms"] >= 0
+    if measure["bufferbloat_up_ms"] is not None:
+        assert measure["bufferbloat_up_ms"] >= 0

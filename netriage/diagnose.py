@@ -143,6 +143,10 @@ def normalize(payload):
     bufferbloat = _num(measure, "bufferbloat_ms", "bloat_ms")
     if bufferbloat is None and latency_idle is not None and latency_loaded is not None:
         bufferbloat = max(0.0, latency_loaded - latency_idle)
+    latency_loaded_up = _num(measure, "latency_loaded_up_ms", "loaded_up_ms")
+    bufferbloat_up = _num(measure, "bufferbloat_up_ms", "bloat_up_ms")
+    if bufferbloat_up is None and latency_idle is not None and latency_loaded_up is not None:
+        bufferbloat_up = max(0.0, latency_loaded_up - latency_idle)
 
     wifi = {
         "rssi": _num(wifi_raw, "rssi"),
@@ -201,6 +205,7 @@ def normalize(payload):
         "jitter": jitter,
         "loss": loss,
         "bufferbloat": bufferbloat,
+        "bufferbloat_up": bufferbloat_up,
         "wifi": wifi,
         "lqc": lqc,
         "dial": dial,
@@ -321,6 +326,13 @@ def diagnose(payload):
             add("congestion", 2.0, "满载延迟增加 %.0f ms，存在排队" % data["bufferbloat"])
     elif data["latency_loaded"] is not None:
         add("congestion", 1.0, "满载延迟 %.0f ms 已记录，但缺少空闲基线，增量无法判定" % data["latency_loaded"])
+
+    if data["bufferbloat_up"] is not None:
+        _check(checks, "bufferbloat_up", "上行满载延迟增量", data["bufferbloat_up"], "ms", 50, 150, lower_is_better=True)
+        if data["bufferbloat_up"] >= 200:
+            add("congestion", 2.4, "上传跑满时延迟增加 %.0f ms，上行队列也在堆积" % data["bufferbloat_up"])
+        elif data["bufferbloat_up"] >= 100:
+            add("congestion", 1.2, "上传跑满时延迟增加 %.0f ms，存在上行排队" % data["bufferbloat_up"])
 
     # ---------- 无线 ----------
     rssi, snr = wifi.get("rssi"), wifi.get("snr")

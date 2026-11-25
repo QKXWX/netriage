@@ -143,3 +143,12 @@ def test_router_system_healthy_has_no_device_evidence():
     assert checks["load_ratio"]["status"] == "ok"
     assert checks["uptime_h"]["status"] == "ok"
     assert checks["mem_free_pct"]["status"] == "ok"
+
+
+def test_upload_bufferbloat_flags_congestion():
+    payload = _clean()
+    payload["measure"]["bufferbloat_up_ms"] = 260
+    result = dg.diagnose(payload)
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["bufferbloat_up"]["status"] == "crit"
+    assert "congestion" in [cause["id"] for cause in result["causes"]]

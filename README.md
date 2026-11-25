@@ -95,11 +95,17 @@ netriage watch --server http://127.0.0.1:8080 --interval 600 --count 0 --plan-do
 
 ### 02 现场数据
 
-这些数据决定「是运营商的问题还是你家的问题」。懒得手抄时，把 `tools/openwrt-collect.sh` 传到路由器上跑一次，它会导出拨号日志 + 无线信号，页面「导入 JSON」直接吃：
+这些数据决定「是运营商的问题还是你家的问题」。懒得手抄时，把 `tools/openwrt-collect.sh` 传到路由器上跑一次，它会导出拨号日志 + 无线信号 + 路由负载，页面「导入 JSON」直接吃：
 
 ```bash
 scp tools/openwrt-collect.sh root@192.168.1.1:/tmp/
 ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
+```
+
+Windows 笔记本不用进路由器后台，直接跑采集器：读 `netsh wlan show interfaces` 的信号/速率/频段/信道，加上机型、BIOS、运行时长、CPU 负载与内存，导出同样可导入的 JSON。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows-collect.ps1 -OutFile wifi.json
 ```
 
 支持的字段：
@@ -108,6 +114,7 @@ ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
 - **LQC / 无线信号**：支持 JSON、`{"data": {...}}` 嵌套、以及 `RSRP=-96 SINR=17 tx_rate=866 band=5G` 这种键值文本；中英文别名都认（信噪比/信号强度/重传率/信道占用/协商速率/光功率/频段）。
 - **无线手填**：没有日志时，从路由后台抄 RSSI、SNR、重传率、信道占用、协商速率即可。
 - **路由自身状态**：采集器同时读 `/proc` 与 `/sys`，带上型号、固件、运行时长、1/5/15 分钟负载、核数、可用内存、WAN 接口收发错误与丢包计数；诊断会据此判断「刚重启/CPU 跑满/内存见底/接口错误」是不是设备或线缆问题，页面也会显示一行路由状态。
+- **Windows 无线采集**：`tools/windows-collect.ps1` 用 `netsh` 取 SSID、信号百分比、收发协商速率、频段、信道，RSSI 按 `百分比/2 − 100` 估算并标注 `rssi_estimated`；同时带机型/BIOS/运行时长/CPU 负载/内存。没有路由器权限的笔记本用户也能留下现场证据。
 
 ### 03 诊断
 
@@ -151,7 +158,7 @@ netriage trend --db data/netriage.db --json  # 机器读，含 stats 与 hourly[
 
 ### 06 命令行探测与定时复测（cron / 路由器）
 
-浏览器测速需要人点，但间歇性故障偏偏在人不在的时候发生。`netriage probe` 用同一套服务端端点做主动测量：空闲 RTT → 单流下载 → 四流并发下载（同时后台插空探测满载延迟，算 bufferbloat，并算出单流/四流倍率）→ 单流上传，输出可直接诊断的 `measure`。
+浏览器测速需要人点，但间歇性故障偏偏在人不在的时候发生。`netriage probe` 用同一套服务端端点做主动测量：空闲 RTT → 单流下载 → 四流并发下载（同时后台插空探测满载延迟，算下行 bufferbloat 与单流/四流倍率）→ 单流上传 → 放大负载再测一次上传（同时插空探测，算上行 bufferbloat），输出可直接诊断的 `measure`。上行负载同样按实测速率放大到约 1.2 秒，负载不足 0.8 秒就标未采信。
 
 ```bash
 # 测一轮并立刻诊断入库（服务端地址就是被测端）
@@ -211,7 +218,7 @@ netriage watch --server http://192.168.1.10:8080 --interval 600 \
 | POST | `/api/ticket` | 同上，返回纯文本报障单 |
 | POST | `/api/report` | 同上，返回单文件 HTML 报告（`Content-Disposition: attachment`） |
 
-`measure` 支持的字段：`down_mbps`、`up_mbps`、`down_single_mbps`、`down_multi_mbps`、`latency_idle_ms`、`latency_loaded_ms`、`bufferbloat_ms`、`jitter_ms`、`loss_pct`。
+`measure` 支持的字段：`down_mbps`、`up_mbps`、`down_single_mbps`、`down_multi_mbps`、`latency_idle_ms`、`latency_loaded_ms`、`bufferbloat_ms`、`latency_loaded_up_ms`、`bufferbloat_up_ms`、`jitter_ms`、`loss_pct`。
 
 ---
 
@@ -278,9 +285,10 @@ netriage/
 │   ├── notify.py        # watch 告警外发（飞书/钉钉/Slack/通用 JSON）
 │   ├── report.py        # 单文件 HTML 报告
 │   └── web/             # 前端（原生 JS，无构建）
-├── tests/               # 67 项 pytest
+├── tests/               # 69 项 pytest
 ├── tools/
-│   └── openwrt-collect.sh  # OpenWrt 拨号日志 + 无线信号采集
+│   ├── openwrt-collect.sh  # OpenWrt 拨号日志 + 无线信号 + 路由负载
+│   └── windows-collect.ps1 # Windows netsh 无线 + 本机状态（UTF-8 BOM）
 ├── examples/            # 可直接跑的测量样例
 ├── Dockerfile
 ├── docker-compose.yml
@@ -293,11 +301,11 @@ netriage/
 
 ```bash
 pip install pytest ruff
-pytest        # 67 passed
+pytest        # 69 passed
 ruff check .
 ```
 
-测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、路由负载/内存/WAN 错误检查、工单文本、HTTP 端点字节数、历史存档增删查、趋势判定的分时/近期/长期/丢包/bufferbloat 分支、告警包体与 webhook 发送、watch 每轮入库与告警冷却、报告历史对照、报告转义、命令行探测的 RTT/吞吐/丢包、CLI 子命令与服务冒烟。
+测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、路由负载/内存/WAN 错误检查、工单文本、HTTP 端点字节数、历史存档增删查、趋势判定的分时/近期/长期/丢包/bufferbloat 分支、告警包体与 webhook 发送、watch 每轮入库与告警冷却、报告历史对照、上行 bufferbloat、报告转义、命令行探测的 RTT/吞吐/丢包、CLI 子命令与服务冒烟。
 
 ---
 

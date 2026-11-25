@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.0
+
+### 新增
+
+- **Windows 采集器**：`tools/windows-collect.ps1` 只读调用 `netsh wlan show interfaces` 与 `Get-CimInstance`，输出 `{source:"windows", wifi, system}`，可直接导入页面 02。无线含 SSID、状态、信号百分比、RSSI 估算（`百分比/2 − 100`，标 `rssi_estimated`）、收发速率、频段、信道、Radio type；系统含机型、BIOS 版本、运行时长、核数、CPU 负载（按核折算）、总/可用内存。
+- 兼容中文与英文 `netsh` 字段名（信号/接收速率/传输速率/频段/信道 与 Signal/Receive rate/Transmit rate/Band/Channel），字段前导空格不影响解析。
+- 脚本保存为 UTF-8 BOM，Windows PowerShell 5.1 直接可跑，不会把中文注释放成乱码。
+- **上行 bufferbloat**：`netriage probe` 在单流上传后再放大负载测一次，后台同步插空 RTT，输出 `latency_loaded_up_ms` / `bufferbloat_up_ms` / `up_load_mb` / `up_load_seconds`；负载不足 0.8 秒标未采信。诊断新增「上行满载延迟增量」检查（≥150 ms 提示、≥200 ms 严重），归到 `congestion`。
+
+### 验证
+
+- 在本机 Windows 实跑：机型 LENOVO 12S9CTO1WW / BIOS M4UKT3BA / 14 核 / 32 GB 内存均正确导出。
+- 用假 `netsh` 输出实测英文无线字段：SSID、82% 信号、−59 dBm 估算、866.7 Mbps 收发、5G、信道 149 全部命中。
+- 自动化测试 **69 项**（新增上行 bufferbloat 的 probe 字段与诊断测试；PowerShell 采集器由人工实机验证，不纳入 Linux CI）。
+
 ## v0.4.0
 
 ### 新增
