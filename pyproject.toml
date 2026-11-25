@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netriage"
+version = "0.1.0"
+description = "宽带故障分诊台：真实测速 → 根因判断 → 报障工单"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "QKXWX" }]
+keywords = ["broadband", "network", "speedtest", "diagnostics", "pppoe", "openwrt"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: System :: Networking",
+]
+
+[project.scripts]
+netriage = "netriage.__main__:main"
+
+[tool.setuptools]
+packages = ["netriage"]
+
+[tool.setuptools.package-data]
+netriage = ["web/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
