@@ -273,6 +273,14 @@ async function runUpload(streams, seconds, signal) {
   }
   await Promise.all(workers);
   const elapsed = (performance.now() - started) / 1000;
+  if (!bytes) {
+    // 时长短或首包慢时可能一个包都没传完，退回单次计时，避免把 0 当成实测值
+    const t0 = performance.now();
+    let status = 0;
+    try { status = await uploadOnce(blob, signal); } catch (err) { status = 0; }
+    const one = (performance.now() - t0) / 1000;
+    if (status === 200) return { mbps: (blob.size * 8 / 1e6) / Math.max(one, 0.001), bytes: blob.size };
+  }
   return { mbps: (bytes * 8 / 1e6) / Math.max(elapsed, 0.001), bytes };
 }
 
