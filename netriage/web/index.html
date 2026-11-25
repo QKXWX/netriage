@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netriage · 宽带故障分诊台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark"></span>
+    <div>
+      <strong>netriage</strong>
+      <em>宽带故障分诊台</em>
+    </div>
+  </div>
+  <div class="top-meta">
+    <span id="metaHost">—</span>
+    <span id="metaVer">v—</span>
+    <span class="live"><i></i>服务在线</span>
+  </div>
+</header>
+
+<main>
+  <!-- 01 测速 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2><span class="idx">01</span> 实测这一段链路</h2>
+      <p class="hint">测的是「当前设备 → 本服务所在机器」，浏览器 TCP 吞吐，不是运营商官方测速点。</p>
+    </div>
+
+    <div class="controls">
+      <label>套餐下行 <span class="unit">Mbps</span>
+        <input id="planDown" type="number" min="1" step="10" value="1000">
+      </label>
+      <label>套餐上行 <span class="unit">Mbps</span>
+        <input id="planUp" type="number" min="1" step="10" value="100">
+      </label>
+      <label>每段时长
+        <select id="duration">
+          <option value="5">5 秒</option>
+          <option value="8" selected>8 秒</option>
+          <option value="12">12 秒</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button id="btnStart" class="primary">开始测速</button>
+        <button id="btnStop" class="ghost" disabled>停止</button>
+      </div>
+    </div>
+
+    <div class="progress"><div id="bar"></div></div>
+    <div class="stage" id="stage">准备就绪 · 全程约 30 秒</div>
+
+    <div class="chart-wrap">
+      <canvas id="chart" width="1200" height="220"></canvas>
+      <span class="chart-cap">实时下行 Mbps</span>
+    </div>
+
+    <div class="metric-grid" id="metrics">
+      <div class="metric"><span>下行</span><b id="mDown">—</b><small>Mbps</small></div>
+      <div class="metric"><span>上行</span><b id="mUp">—</b><small>Mbps</small></div>
+      <div class="metric"><span>单流下行</span><b id="mSingle">—</b><small>Mbps</small></div>
+      <div class="metric"><span>空闲延迟</span><b id="mLatency">—</b><small>ms</small></div>
+      <div class="metric"><span>抖动</span><b id="mJitter">—</b><small>ms</small></div>
+      <div class="metric"><span>探测丢包</span><b id="mLoss">—</b><small>%</small></div>
+      <div class="metric"><span>满载延迟增量</span><b id="mBloat">—</b><small>ms</small></div>
+      <div class="metric"><span>下行达标率</span><b id="mRatio">—</b><small>%</small></div>
+    </div>
+    <p class="hint small">丢包为 HTTP 探测估算，非 ICMP；满载增量 = 下载跑满时的延迟 − 空闲延迟，用来区分「带宽不够」和「队列堆积」。</p>
+  </section>
+
+  <!-- 02 现场数据 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2><span class="idx">02</span> 现场数据</h2>
+      <p class="hint">没有这些数据，只能判断「慢」；有了才能分清是运营商、线路、无线还是路由配置。</p>
+    </div>
+
+    <div class="data-grid">
+      <div class="field-block">
+        <div class="block-head">
+          <h3>拨号日志</h3>
+          <div class="mini">
+            <button class="tiny" data-demo="dial">载入示例</button>
+            <label class="tiny file">选择文件<input type="file" id="fileDial" accept=".txt,.log,text/plain"></label>
+          </div>
+        </div>
+        <textarea id="dialLog" rows="7" placeholder="把 OpenWrt / 光猫的 PPPoE 日志粘进来（pppd、错误码 691/678、LCP 超时都认）"></textarea>
+        <p class="hint small" id="dialHint">支持 pppd 原始日志、logread 片段、中文报错文本。</p>
+      </div>
+
+      <div class="field-block">
+        <div class="block-head">
+          <h3>无线 / 光猫信号</h3>
+          <div class="mini">
+            <button class="tiny" data-demo="lqc">载入示例</button>
+            <label class="tiny file">选择文件<input type="file" id="fileLqc" accept=".json,.txt,application/json,text/plain"></label>
+          </div>
+        </div>
+        <textarea id="lqc" rows="7" placeholder='JSON 或键值文本，例如：{"rsrp":-96,"sinr":17,"rx_power":-24.6} 或 RSRP=-96 SINR=17 rx_power=-24.6'></textarea>
+        <p class="hint small">认 rsrp / rssi / sinr / snr / retry / tx_rate / rx_power（光功率）等字段。</p>
+      </div>
+
+      <div class="field-block">
+        <div class="block-head"><h3>无线手填</h3></div>
+        <div class="mini-grid">
+          <label>RSSI <span class="unit">dBm</span><input id="wRssi" type="number" placeholder="-65"></label>
+          <label>SNR <span class="unit">dB</span><input id="wSnr" type="number" placeholder="25"></label>
+          <label>重传率 <span class="unit">%</span><input id="wRetry" type="number" placeholder="8"></label>
+          <label>信道占用 <span class="unit">%</span><input id="wUtil" type="number" placeholder="40"></label>
+          <label>协商速率 <span class="unit">Mbps</span><input id="wRate" type="number" placeholder="866"></label>
+          <label>频段
+            <select id="wBand">
+              <option value="">未知</option>
+              <option value="5G">5GHz</option>
+              <option value="2.4G">2.4GHz</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="field-block">
+        <div class="block-head"><h3>工单信息</h3></div>
+        <div class="mini-grid">
+          <label class="wide">宽带账号<input id="account" type="text" placeholder="可只填后四位"></label>
+          <label class="wide">运营商<input id="isp" type="text" placeholder="中国电信 / 联通 / 移动"></label>
+          <label class="wide">安装地址<input id="address" type="text" placeholder="小区 + 楼栋"></label>
+          <label class="wide">联系人<input id="contact" type="text" placeholder="称呼 + 电话"></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 诊断 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2><span class="idx">03</span> 诊断</h2>
+      <p class="hint">规则加权，可复现：每条结论都挂着具体数字或日志证据。</p>
+    </div>
+    <div class="actions left">
+      <button id="btnDiag" class="primary">生成诊断</button>
+      <button id="btnDiagDemo" class="ghost">用示例数据看效果</button>
+    </div>
+    <div id="diagOut" class="diag-empty">还没有诊断结果。先测速，或直接用示例数据。</div>
+  </section>
+
+  <!-- 04 工单 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2><span class="idx">04</span> 报障工单</h2>
+      <p class="hint">把实测数据、诊断依据、已做排查一次性写清，避免客服让你「再测一次」。</p>
+    </div>
+    <div class="actions left">
+      <button id="btnTicket" class="primary">生成工单</button>
+      <button id="btnCopy" class="ghost" disabled>复制</button>
+      <button id="btnDownload" class="ghost" disabled>下载 txt</button>
+    </div>
+    <pre id="ticket" class="ticket">工单还没生成。</pre>
+  </section>
+</main>
+
+<footer>
+  <span>netriage · MIT</span>
+  <span>测量口径：浏览器 ↔ 本服务；不代表运营商到户实测</span>
+  <span>仓库：github.com/QKXWX/netriage</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
