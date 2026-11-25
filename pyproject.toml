@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netriage"
-version = "0.1.0"
+version = "0.2.0"
 description = "宽带故障分诊台：真实测速 → 根因判断 → 报障工单"
 readme = "README.md"
 requires-python = ">=3.9"

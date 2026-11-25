@@ -26,6 +26,7 @@ const state = {
   running: false,
   abort: null,
   chart: [],
+  history: [],
 };
 
 const DEMO_MEASURE = {
@@ -362,6 +363,7 @@ async function startTest() {
       body: JSON.stringify(payload),
     });
     renderDiag(res.result);
+    loadHistory();
     setStage('完成 · 用时约 ' + Math.round(performance.now() / 1000) + ' 秒');
   } catch (err) {
     if (err && err.message === 'aborted') setStage('已停止');
@@ -393,6 +395,7 @@ function renderMetrics(m, planDown, planUp) {
 
 function renderDiag(result) {
   state.result = result;
+  $('btnReport').disabled = false;
   const out = $('diagOut');
   const health = result.health;
   const tone = health >= 85 ? 'good' : (health >= 60 ? 'mid' : 'low');
@@ -508,6 +511,239 @@ function downloadTicket() {
   URL.revokeObjectURL(url);
 }
 
+
+/* ---------------- 历史与趋势 ---------------- */
+
+function drawHistChart(runs, planDown) {
+  const cv = $('histChart');
+  const ctx2 = cv.getContext('2d');
+  const W = cv.width;
+  const H = cv.height;
+  ctx2.clearRect(0, 0, W, H);
+  const list = (runs || []).slice().reverse();
+  if (!list.length) {
+    ctx2.fillStyle = '#5d7481';
+    ctx2.font = '13px ui-monospace, Consolas, monospace';
+    ctx2.fillText('暂无历史数据', 16, 28);
+    return;
+  }
+  const padL = 48;
+  const padR = 14;
+  const padT = 26;
+  const padB = 22;
+  const max = Math.max(planDown || 0, ...list.map((r) => r.down_mbps || 0), 1) * 1.08;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const bw = plotW / list.length;
+
+  ctx2.strokeStyle = 'rgba(255,255,255,.06)';
+  ctx2.lineWidth = 1;
+  for (let i = 0; i <= 3; i += 1) {
+    const y = padT + (plotH / 3) * i;
+    ctx2.beginPath();
+    ctx2.moveTo(padL, y);
+    ctx2.lineTo(W - padR, y);
+    ctx2.stroke();
+  }
+
+  if (planDown) {
+    const y = padT + plotH - (planDown / max) * plotH;
+    ctx2.setLineDash([6, 5]);
+    ctx2.strokeStyle = 'rgba(243,178,75,.6)';
+    ctx2.beginPath();
+    ctx2.moveTo(padL, y);
+    ctx2.lineTo(W - padR, y);
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+    ctx2.fillStyle = 'rgba(243,178,75,.85)';
+    ctx2.font = '10.5px ui-monospace, Consolas, monospace';
+    ctx2.fillText('签约 ' + Math.round(planDown), 6, y + 3);
+  }
+
+  list.forEach((r, i) => {
+    const value = r.down_mbps || 0;
+    const barH = Math.max(2, (value / max) * plotH);
+    const x = padL + i * bw + bw * 0.16;
+    const w = Math.max(2, bw * 0.68);
+    const y = padT + plotH - barH;
+    const ratio = planDown ? value / planDown : 1;
+    ctx2.fillStyle = ratio < 0.7 ? 'rgba(239,93,115,.85)' : 'rgba(45,212,191,.8)';
+    ctx2.fillRect(x, y, w, barH);
+    if (list.length <= 12) {
+      ctx2.fillStyle = '#8fa6b2';
+      ctx2.font = '10px ui-monospace, Consolas, monospace';
+      ctx2.fillText(Math.round(value), x - 2, Math.max(10, y - 4));
+    }
+  });
+
+  ctx2.fillStyle = '#5d7481';
+  ctx2.font = '10.5px ui-monospace, Consolas, monospace';
+  const first = list[0].created_at ? list[0].created_at.slice(5, 16).replace('T', ' ') : '';
+  const last = list[list.length - 1].created_at ? list[list.length - 1].created_at.slice(5, 16).replace('T', ' ') : '';
+  ctx2.fillText(first, padL, H - 6);
+  const lastText = last;
+  const width = ctx2.measureText(lastText).width;
+  ctx2.fillText(lastText, W - padR - width, H - 6);
+}
+
+function renderHistory(runs, count) {
+  const out = $('histOut');
+  drawHistChart(runs, num('planDown', 0));
+  if (!runs || !runs.length) {
+    out.className = 'diag-empty';
+    out.textContent = '还没有历史记录。测一次速并生成诊断，就会自动存档。';
+    return;
+  }
+  out.className = '';
+  const rows = runs.map((run, index) => {
+    const prev = runs[index + 1];
+    let delta = '';
+    if (prev && prev.down_mbps && run.down_mbps) {
+      const change = (run.down_mbps - prev.down_mbps) / prev.down_mbps * 100;
+      const cls = change >= 0 ? 'up' : 'down';
+      const sign = change >= 0 ? '+' : '';
+      delta = '<span class="hdelta ' + cls + '">' + sign + change.toFixed(0) + '%</span>';
+    }
+    const tone = run.health >= 85 ? 'ok' : (run.health >= 60 ? 'warn' : 'crit');
+    const time = (run.created_at || '').slice(5, 16).replace('T', ' ');
+    return [
+      '<tr class="hist-row" data-id="' + run.id + '">',
+      '<td class="val">' + esc(time) + '</td>',
+      '<td><span class="tag ' + tone + '">' + run.health + '</span></td>',
+      '<td class="val">' + fmt(run.down_mbps, 0) + ' ' + delta + '</td>',
+      '<td class="val">' + fmt(run.up_mbps, 0) + '</td>',
+      '<td class="val">' + fmt(run.latency_idle_ms, 1) + '</td>',
+      '<td class="val">' + fmt(run.bufferbloat_ms, 0) + '</td>',
+      '<td class="verdict-cell">' + esc(run.verdict || '—') + '</td>',
+      '</tr>',
+    ].join('');
+  }).join('');
+
+  out.innerHTML = [
+    '<table class="hist"><thead><tr>',
+    '<th>时间</th><th>健康</th><th>下行 Mbps</th><th>上行 Mbps</th>',
+    '<th>空闲延迟 ms</th><th>满载增量 ms</th><th>结论</th>',
+    '</tr></thead><tbody>',
+    rows,
+    '</tbody></table>',
+    '<p class="hint small">点任意一行可载入当时的测量与诊断结果；括号里是相对上一次的变化。</p>',
+  ].join('');
+
+  out.querySelectorAll('.hist-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      openRun(parseInt(row.dataset.id, 10)).catch((err) => setStage('载入失败：' + err.message));
+    });
+  });
+}
+
+async function loadHistory() {
+  try {
+    const res = await api('/api/history?limit=20');
+    state.history = res.runs;
+    $('histMeta').textContent = res.count ? '共 ' + res.count + ' 次存档' : '';
+    renderHistory(res.runs, res.count);
+  } catch (err) {
+    $('histOut').className = 'diag-empty';
+    $('histOut').textContent = '历史加载失败：' + err.message;
+  }
+}
+
+async function openRun(id) {
+  const res = await api('/api/history/' + id);
+  const run = res.run;
+  if (run.payload && run.payload.measure) {
+    state.measure = run.payload.measure;
+    renderMetrics(state.measure, num('planDown', 0), num('planUp', 0));
+  }
+  renderDiag(run.result);
+  $('diagOut').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setStage('已载入历史 #' + id);
+}
+
+async function clearHistory() {
+  if (!window.confirm('清空全部历史存档？这个操作不可恢复。')) return;
+  try {
+    const res = await api('/api/history/clear', { method: 'POST' });
+    setStage('已清空 ' + res.removed + ' 条历史');
+    await loadHistory();
+  } catch (err) {
+    setStage('清空失败：' + err.message);
+  }
+}
+
+/* ---------------- 报告与导入 ---------------- */
+
+async function downloadReport() {
+  if (!state.result) return;
+  const body = Object.assign({}, buildPayload(), { result: state.result });
+  const res = await fetch('/api/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const htmlText = await res.text();
+  const blob = new Blob([htmlText], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'netriage-诊断报告-' + new Date().toISOString().slice(0, 10) + '.html';
+  a.click();
+  URL.revokeObjectURL(url);
+  setStage('报告已生成，可直接发给运营商或存档');
+}
+
+function applyPayload(data) {
+  const done = [];
+  if (data.plan) {
+    if (data.plan.down) { $('planDown').value = data.plan.down; done.push('套餐下行'); }
+    if (data.plan.up) { $('planUp').value = data.plan.up; done.push('套餐上行'); }
+  }
+  if (data.measure && typeof data.measure === 'object') {
+    state.measure = Object.assign({}, state.measure, data.measure);
+    renderMetrics(state.measure, num('planDown', 0), num('planUp', 0));
+    done.push('实测指标');
+  }
+  const wifi = data.wifi || data.wireless;
+  if (wifi && typeof wifi === 'object') {
+    if (wifi.rssi !== undefined) $('wRssi').value = wifi.rssi;
+    if (wifi.snr !== undefined) $('wSnr').value = wifi.snr;
+    if (wifi.retry_pct !== undefined) $('wRetry').value = wifi.retry_pct;
+    if (wifi.channel_util !== undefined) $('wUtil').value = wifi.channel_util;
+    if (wifi.tx_rate !== undefined) $('wRate').value = wifi.tx_rate;
+    if (wifi.band) $('wBand').value = wifi.band === '2.4G' ? '2.4G' : '5G';
+    done.push('无线信号');
+  }
+  if (data.lqc !== undefined) {
+    $('lqc').value = typeof data.lqc === 'string' ? data.lqc : JSON.stringify(data.lqc);
+    done.push('LQC');
+  }
+  if (data.dial_log) { $('dialLog').value = data.dial_log; done.push('拨号日志'); }
+  if (data.account) { $('account').value = data.account; done.push('宽带账号'); }
+  if (data.isp) { $('isp').value = data.isp; done.push('运营商'); }
+  if (data.address) { $('address').value = data.address; done.push('安装地址'); }
+  if (data.contact) { $('contact').value = data.contact; done.push('联系人'); }
+  setStage('已导入：' + (done.length ? done.join(' / ') : '没有可识别的字段'));
+}
+
+function importPayload(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(String(reader.result || ''));
+    } catch (err) {
+      setStage('JSON 解析失败：' + err.message);
+      return;
+    }
+    applyPayload(data);
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
 /* ---------------- 事件绑定 ---------------- */
 
 function bind() {
@@ -524,6 +760,7 @@ function bind() {
         body: JSON.stringify(buildPayload()),
       });
       renderDiag(res.result);
+      loadHistory();
     } catch (err) {
       setStage('诊断失败：' + err.message);
     }
@@ -541,7 +778,7 @@ function bind() {
     state.measure = Object.assign({}, DEMO_MEASURE);
     renderMetrics(state.measure, num('planDown', 0), num('planUp', 0));
     try {
-      const res = await api('/api/diagnose', {
+      const res = await api('/api/diagnose?save=0', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildPayload()),
@@ -567,6 +804,13 @@ function bind() {
 
   $('fileDial').addEventListener('change', (event) => readInto(event, 'dialLog'));
   $('fileLqc').addEventListener('change', (event) => readInto(event, 'lqc'));
+  $('filePayload').addEventListener('change', importPayload);
+
+  $('btnReport').addEventListener('click', () => {
+    downloadReport().catch((err) => setStage('报告生成失败：' + err.message));
+  });
+  $('btnHistRefresh').addEventListener('click', loadHistory);
+  $('btnHistClear').addEventListener('click', clearHistory);
 
   window.addEventListener('resize', fitCanvas);
 }
@@ -587,6 +831,7 @@ async function boot() {
     $('metaHost').textContent = meta.host || 'local';
   } catch (err) { /* 元信息失败不影响使用 */ }
   bind();
+  loadHistory();
 }
 
 boot();

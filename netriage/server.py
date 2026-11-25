@@ -13,11 +13,14 @@ import os
 import posixpath
 import threading
 import time
+import datetime
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__
 from .diagnose import diagnose, ticket_for
+from .report import render_report
+from .storage import HistoryStore, default_db_path
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_UPLOAD = 256 * 1024 * 1024      # 单次上传上限 256MB
@@ -106,6 +109,12 @@ class NetriageHandler(BaseHTTPRequestHandler):
         if path == "/api/download":
             self._download(query)
             return
+        if path == "/api/history":
+            self._history_list(query)
+            return
+        if path.startswith("/api/history/"):
+            self._history_item(path[len("/api/history/"):])
+            return
 
         if path in ("/", "/index.html"):
             self._static("index.html")
@@ -114,6 +123,36 @@ class NetriageHandler(BaseHTTPRequestHandler):
             self._static(path[len("/static/"):])
             return
         self._send(404, "404", "text/plain; charset=utf-8")
+
+    def _history_list(self, query):
+        if self.server.store is None:
+            self._json(503, {"ok": False, "error": "历史存档不可用"})
+            return
+        try:
+            limit = int(query.get("limit", ["20"])[0])
+            offset = int(query.get("offset", ["0"])[0])
+        except ValueError:
+            limit, offset = 20, 0
+        self._json(200, {
+            "ok": True,
+            "count": self.server.store.count(),
+            "runs": self.server.store.list(limit=limit, offset=offset),
+        })
+
+    def _history_item(self, raw_id):
+        if self.server.store is None:
+            self._json(503, {"ok": False, "error": "历史存档不可用"})
+            return
+        try:
+            run_id = int(raw_id.strip("/"))
+        except ValueError:
+            self._json(400, {"ok": False, "error": "记录 id 不合法"})
+            return
+        record = self.server.store.get(run_id)
+        if record is None:
+            self._json(404, {"ok": False, "error": "没有这条记录"})
+            return
+        self._json(200, {"ok": True, "run": record})
 
     def _download(self, query):
         try:
@@ -159,6 +198,7 @@ class NetriageHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
         if path == "/api/upload":
             started = time.time()
@@ -183,7 +223,41 @@ class NetriageHandler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "JSON 解析失败：%s" % exc})
                 return
             result = diagnose(payload)
-            self._json(200, {"ok": True, "result": result})
+            save = query.get("save", ["1"])[0].lower() not in ("0", "false", "no")
+            run_id = None
+            if save and self.server.store is not None:
+                try:
+                    run_id = self.server.store.save(payload, result)
+                    result["id"] = run_id
+                except Exception as exc:            # 存档失败不能让诊断失败
+                    print("[netriage] 历史存档失败：%s" % exc)
+            self._json(200, {"ok": True, "result": result, "id": run_id})
+            return
+
+        if path == "/api/history/clear":
+            if self.server.store is None:
+                self._json(503, {"ok": False, "error": "历史存档不可用"})
+                return
+            removed = self.server.store.clear()
+            self._json(200, {"ok": True, "removed": removed})
+            return
+
+        if path == "/api/report":
+            body = self._read_body(limit=8 * 1024 * 1024)
+            if not body:
+                self._json(400, {"ok": False, "error": "请求体为空"})
+                return
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception as exc:
+                self._json(400, {"ok": False, "error": "JSON 解析失败：%s" % exc})
+                return
+            result = payload.get("result") or diagnose(payload)
+            html_text = render_report(payload, result)
+            filename = "netriage-report-%s.html" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            self._send(200, html_text, "text/html; charset=utf-8", {
+                "Content-Disposition": 'attachment; filename="%s"' % filename,
+            })
             return
 
         if path == "/api/ticket":
@@ -202,16 +276,23 @@ class NetriageHandler(BaseHTTPRequestHandler):
         self._json(404, {"ok": False, "error": "未知接口"})
 
 
-def make_server(host="0.0.0.0", port=8080):
+def make_server(host="0.0.0.0", port=8080, db_path=None):
     server = ThreadingHTTPServer((host, port), NetriageHandler)
     server.daemon_threads = True
+    try:
+        server.store = HistoryStore(db_path or default_db_path())
+    except Exception as exc:
+        print("[netriage] 历史存档不可用：%s" % exc)
+        server.store = None
     return server
 
 
-def serve(host="0.0.0.0", port=8080):
-    server = make_server(host, port)
+def serve(host="0.0.0.0", port=8080, db_path=None):
+    server = make_server(host, port, db_path)
     actual = server.server_address[1]
     print("netriage %s 正在监听 http://%s:%s/" % (__version__, host, actual))
+    if getattr(server, "store", None) is not None:
+        print("历史存档：%s" % server.store.path)
     print("Ctrl-C 停止")
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2})
     thread.daemon = True

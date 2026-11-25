@@ -85,6 +85,7 @@
           <div class="mini">
             <button class="tiny" data-demo="dial">载入示例</button>
             <label class="tiny file">选择文件<input type="file" id="fileDial" accept=".txt,.log,text/plain"></label>
+            <label class="tiny file" title="导入 netriage 测量 JSON 或 OpenWrt 采集结果">导入 JSON<input type="file" id="filePayload" accept=".json,application/json"></label>
           </div>
         </div>
         <textarea id="dialLog" rows="7" placeholder="把 OpenWrt / 光猫的 PPPoE 日志粘进来（pppd、错误码 691/678、LCP 超时都认）"></textarea>
@@ -142,6 +143,7 @@
     <div class="actions left">
       <button id="btnDiag" class="primary">生成诊断</button>
       <button id="btnDiagDemo" class="ghost">用示例数据看效果</button>
+      <button id="btnReport" class="ghost" disabled>下载 HTML 报告</button>
     </div>
     <div id="diagOut" class="diag-empty">还没有诊断结果。先测速，或直接用示例数据。</div>
   </section>
@@ -159,6 +161,24 @@
     </div>
     <pre id="ticket" class="ticket">工单还没生成。</pre>
   </section>
+  <!-- 05 历史与趋势 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2><span class="idx">05</span> 历史与趋势</h2>
+      <p class="hint">每次诊断自动存档（本地 SQLite）。单次测速看不出「是不是一直这么慢」，趋势能。</p>
+    </div>
+    <div class="actions left">
+      <button id="btnHistRefresh" class="ghost">刷新</button>
+      <button id="btnHistClear" class="ghost">清空历史</button>
+      <span id="histMeta" class="hint small"></span>
+    </div>
+    <div class="chart-wrap hist-wrap">
+      <canvas id="histChart" width="1200" height="150"></canvas>
+      <span class="chart-cap">下行历史 · 虚线为签约带宽</span>
+    </div>
+    <div id="histOut" class="diag-empty">还没有历史记录。测一次速并生成诊断，就会自动存档。</div>
+  </section>
+
 </main>
 
 <footer>

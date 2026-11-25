@@ -218,3 +218,17 @@ footer{
   .panel{padding:20px 18px}
   .actions{margin-left:0}
 }
+
+/* 历史趋势 */
+#histChart{display:block;width:100%;height:150px}
+.hist-wrap{margin-top:16px}
+table.hist{width:100%;border-collapse:collapse;font-size:12.5px}
+table.hist th,table.hist td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;white-space:nowrap}
+table.hist th{color:var(--dim);font-weight:500;font-size:11.5px;letter-spacing:.03em}
+table.hist td.val{font-family:var(--mono)}
+table.hist td.verdict-cell{white-space:normal;color:var(--muted);max-width:340px}
+table.hist tbody tr{cursor:pointer;transition:background .12s}
+table.hist tbody tr:hover{background:rgba(45,212,191,.06)}
+.hdelta{font-family:var(--mono);font-size:10.5px;margin-left:4px}
+.hdelta.up{color:var(--ok)}
+.hdelta.down{color:var(--red)}

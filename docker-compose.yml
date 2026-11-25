@@ -1,0 +1,12 @@
+services:
+  netriage:
+    build: .
+    image: netriage:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - netriage-data:/data
+    restart: unless-stopped
+
+volumes:
+  netriage-data:

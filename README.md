@@ -9,11 +9,16 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-0-lightgrey)
 
 浏览器里跑真实测速，把上行/下行、单流/多流、空闲延迟、抖动、探测丢包、满载延迟增量一起采下来；
-叠加光猫拨号日志与 LQC/无线信号，用一套可复现的加权规则判断根因是**运营商端口、QoS 限速、上联拥塞、线路丢包、WiFi 干扰、光衰、拨号认证**还是**设备瓶颈**，最后生成一张能直接发给运营商的报障工单。
+叠加光猫拨号日志与 LQC/无线信号，用一套可复现的加权规则判断根因是**运营商端口、QoS 限速、上联拥塞、线路丢包、WiFi 干扰、光衰、拨号认证**还是**设备瓶颈**；
+每次诊断自动存档成趋势，最后生成一张能直接发给运营商的报障工单和一份可存档的 HTML 报告。
 
 ![测量与数据面板](docs/screenshot-measure.png)
 
 ![诊断结论](docs/screenshot-diagnosis.png)
+
+![历史与趋势](docs/screenshot-history.png)
+
+![导出的 HTML 报告](docs/screenshot-report.png)
 
 零第三方依赖（Python 标准库 + 原生 JS），一个进程同时是测速服务端和诊断服务端。
 
@@ -54,6 +59,12 @@ netriage serve --port 8080
 netriage diagnose examples/slow-gigabit.json        # 人读报告
 netriage diagnose examples/slow-gigabit.json --json # 机读结果
 netriage diagnose examples/slow-gigabit.json --ticket # 直接出报障单
+netriage diagnose examples/slow-gigabit.json --html report.html # 导出单文件报告
+netriage history --limit 20                          # 看历史存档（默认 data/netriage.db）
+
+# 命令行主动探测：不占浏览器，可放 cron
+netriage probe --server http://127.0.0.1:8080 --download 8 --upload 4 --ping 10 --diagnose
+netriage watch --server http://127.0.0.1:8080 --interval 600 --count 0 --plan-down 1000 --plan-up 100
 ```
 
 没有数据也能看效果：页面上点「用示例数据看效果」，或者 `netriage demo`。
@@ -74,15 +85,22 @@ netriage diagnose examples/slow-gigabit.json --ticket # 直接出报障单
 
 ---
 
-## 四个面板
+## 五个面板
 
 ### 01 实测这一段链路
 
-填签约上下行（用于算达标率），选每段时长（4/8/15 秒），点开始。流程：空闲延迟 → 单流下行 → 四流下行（期间插空探测满载延迟）→ 上行。全程有实时速率曲线与进度，可随时停止。
+填签约上下行（用于算达标率），选每段时长（5/8/12 秒），点开始。流程：空闲延迟 → 单流下行 → 四流下行（期间插空探测满载延迟）→ 上行。全程有实时速率曲线与进度，可随时停止。
 
 ### 02 现场数据
 
-这些数据决定「是运营商的问题还是你家的问题」：
+这些数据决定「是运营商的问题还是你家的问题」。懒得手抄时，把 `tools/openwrt-collect.sh` 传到路由器上跑一次，它会导出拨号日志 + 无线信号，页面「导入 JSON」直接吃：
+
+```bash
+scp tools/openwrt-collect.sh root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
+```
+
+支持的字段：
 
 - **拨号日志**：光猫 / 路由的 PPPoE 日志粘贴进来。能识别 `PADI/PADO`、`Modem hangup`、`LCP timeout`、`691/678/651` 等错误码，统计拨号次数与掉线次数。
 - **LQC / 无线信号**：支持 JSON、`{"data": {...}}` 嵌套、以及 `RSRP=-96 SINR=17 tx_rate=866 band=5G` 这种键值文本；中英文别名都认（信噪比/信号强度/重传率/信道占用/协商速率/光功率/频段）。
@@ -109,6 +127,49 @@ netriage diagnose examples/slow-gigabit.json --ticket # 直接出报障单
 
 把套餐、实测值、诊断依据、已做排查一次写清，避免客服循环让你「再测一次」。可复制、可下载 txt。工单里的「已做排查」标注了**未做的条目请删除**，不替你编造事实。
 
+同一份数据也能导出**单文件 HTML 报告**（内联样式、无外链脚本，断网可看、打印白底黑字），适合发给运营商、贴进工单系统或留档。
+
+### 05 历史与趋势
+
+每次诊断自动写入本地 SQLite（默认 `data/netriage.db`），页面用柱状图对比最近 20 次下行速率，虚线是签约带宽；表格里给出健康分、上下行、延迟、满载增量，以及**相对上一次的变化**。点任意一行可回看当时的测量与诊断结论。
+
+单次测速只能回答「现在慢」，趋势才能回答「是不是一直慢、晚高峰是否更糟」——这是和运营商扯皮时最有用的一张图。
+
+### 06 命令行探测与定时复测（cron / 路由器）
+
+浏览器测速需要人点，但间歇性故障偏偏在人不在的时候发生。`netriage probe` 用同一套服务端端点做主动测量：空闲 RTT → 单流下载 → 四流并发下载（同时后台插空探测满载延迟，算 bufferbloat，并算出单流/四流倍率）→ 单流上传，输出可直接诊断的 `measure`。
+
+```bash
+# 测一轮并立刻诊断入库（服务端地址就是被测端）
+netriage probe --server http://192.168.1.10:8080 \
+  --download 8 --upload 4 --ping 10 \
+  --plan-down 1000 --plan-up 100 --diagnose
+
+# 只要测量数据，稍后再诊断
+netriage probe --server http://192.168.1.10:8080 --out measure.json
+netriage diagnose measure.json --html report.html
+```
+
+`netriage watch` 把这件事变成无人值守：每 N 秒测一轮、失败不终止、每轮打印一行并入库。
+
+```bash
+# 每 10 分钟一轮，一直跑；Ctrl-C 停止
+netriage watch --server http://192.168.1.10:8080 \
+  --interval 600 --plan-down 1000 --plan-up 100
+
+# 只跑 6 轮（一小时），并把每轮结果追加进 JSONL
+netriage watch --server http://192.168.1.10:8080 --interval 600 --count 6 --jsonl watch.jsonl
+```
+
+定时任务示例（跑在路由器或常开的小主机上，测的是「这台机器 → netriage 服务」）：
+
+```cron
+# 晚高峰 19:00-23:00，每 10 分钟一次
+*/10 19-22 * * * cd /opt/netriage && python3 -m netriage probe --server http://192.168.1.10:8080 --download 8 --upload 4 --plan-down 1000 --plan-up 100 --diagnose >> /var/log/netriage-probe.log 2>&1
+```
+
+三个注意点：探测会真实耗流量（单流 8 MB + 四流 16 MB + 上传 4 MB ≈ 28 MB/轮）；千兆以上链路默认负载只有零点几秒，bufferbloat 会被标成「未采信」，想看满载延迟请把 `--download` 加到 64 以上；`watch` 是进程内循环，机器重启就停，要开机自启请交给 cron / systemd timer。
+
 ---
 
 ## HTTP API
@@ -120,8 +181,12 @@ netriage diagnose examples/slow-gigabit.json --ticket # 直接出报障单
 | GET | `/api/meta` | 版本、服务地址、时间、下载/上传上限 |
 | GET | `/api/download?mb=N` | 流式下载 N MB（上限 512），`X-Netriage-Bytes` 返回实际字节 |
 | POST | `/api/upload` | 接收原始字节（上限 256 MB），返回字节数与耗时 |
-| POST | `/api/diagnose` | 传入 `{plan, measure, wifi, lqc, dial_log, account...}`，返回结论/检查表/指标 |
+| POST | `/api/diagnose` | 传入 `{plan, measure, wifi, lqc, dial_log, account...}`，返回结论/检查表/指标；默认存档，`?save=0` 不存 |
+| GET | `/api/history?limit=20&offset=0` | 历史摘要列表 + 总数 |
+| GET | `/api/history/<id>` | 单条完整记录（原始载荷 + 诊断结果） |
+| POST | `/api/history/clear` | 清空存档，返回删除条数 |
 | POST | `/api/ticket` | 同上，返回纯文本报障单 |
+| POST | `/api/report` | 同上，返回单文件 HTML 报告（`Content-Disposition: attachment`） |
 
 `measure` 支持的字段：`down_mbps`、`up_mbps`、`down_single_mbps`、`down_multi_mbps`、`latency_idle_ms`、`latency_loaded_ms`、`bufferbloat_ms`、`jitter_ms`、`loss_pct`。
 
@@ -129,7 +194,21 @@ netriage diagnose examples/slow-gigabit.json --ticket # 直接出报障单
 
 ## 部署
 
-systemd：
+### Docker（推荐，一条命令）
+
+```bash
+docker compose up -d
+# 打开 http://<机器IP>:8080，历史存进命名卷 netriage-data
+```
+
+或者不用 compose：
+
+```bash
+docker build -t netriage .
+docker run -d --name netriage -p 8080:8080 -v netriage-data:/data netriage
+```
+
+### systemd
 
 ```ini
 [Unit]
@@ -165,14 +244,21 @@ location / {
 ```
 netriage/
 ├── netriage/
-│   ├── __main__.py      # CLI：serve / diagnose / demo / version
+│   ├── __main__.py      # CLI：serve / diagnose / probe / watch / history / demo / version
 │   ├── server.py        # 标准库 HTTP 服务 + 测速端点
+│   ├── probe.py         # 命令行主动探测与定时复测（bufferbloat）
 │   ├── diagnose.py      # 规则引擎、检查表、健康分、工单
 │   ├── parsers.py       # 拨号日志 / LQC / 无线文本解析
 │   ├── samples.py       # 示例测量
+│   ├── storage.py       # SQLite 历史存档
+│   ├── report.py        # 单文件 HTML 报告
 │   └── web/             # 前端（原生 JS，无构建）
-├── tests/               # 24 项 pytest
+├── tests/               # 47 项 pytest
+├── tools/
+│   └── openwrt-collect.sh  # OpenWrt 拨号日志 + 无线信号采集
 ├── examples/            # 可直接跑的测量样例
+├── Dockerfile
+├── docker-compose.yml
 └── .github/workflows/   # lint + 多版本测试 + 服务冒烟
 ```
 
@@ -182,11 +268,11 @@ netriage/
 
 ```bash
 pip install pytest ruff
-pytest        # 24 passed
+pytest        # 47 passed
 ruff check .
 ```
 
-测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、工单文本、HTTP 端点字节数、CLI 三个子命令。
+测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、工单文本、HTTP 端点字节数、历史存档增删查、报告转义、命令行探测的 RTT/吞吐/丢包、watch 每轮入库、CLI 子命令与服务冒烟。
 
 ---
 
@@ -194,8 +280,9 @@ ruff check .
 
 - 丢包是 HTTP 探测估算，样本只有 10 次；需要精确 ICMP 时，请用 `mtr` 配合本项目的诊断结论。
 - 浏览器吞吐受单核性能与 TLS 影响，跑 2.5G/万兆会先撞到浏览器上限。
-- 只有「一次测量」的横截面，没有历史趋势；后续计划加 SQLite 时序对比与定时复测。
-- 目前需要手工粘贴拨号日志与信号；后续计划对接 OpenWrt/光猫的 HTTP 接口自动采集。
+- `watch` 已经是无人值守的定时复测，但计划任务要交给 cron / systemd timer；服务端还没有内置调度器。
+- `probe` 是单流 TCP 探测，测不出多流并发上限，也不能替代 ICMP/UDP 丢包检测；精确排障仍需 `mtr` 与光猫误码率。
+- OpenWrt 采集器目前是手动跑脚本导出 JSON；下一步计划让它常驻定时上报，或直接对接 ubus。
 
 ---
 
