@@ -44,7 +44,7 @@ jobs:
         run: ruff check .
 
       - name: Tests
-        run: pytest
+        run: python -m pytest
 
       - name: Serve smoke test
         run: |
