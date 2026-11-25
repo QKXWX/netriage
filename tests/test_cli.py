@@ -4,6 +4,8 @@ import sys
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from netriage import __version__  # noqa: E402
 
 
 def run(*args, env=None):
@@ -16,7 +18,7 @@ def run(*args, env=None):
 def test_version_command():
     result = run("version")
     assert result.returncode == 0
-    assert "netriage 0.2.0" in result.stdout
+    assert "netriage " + __version__ in result.stdout
 
 
 def test_diagnose_example_json():

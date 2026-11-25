@@ -169,6 +169,25 @@ def normalize(payload):
         dial_text = "\n".join(str(item) for item in dial_text) if isinstance(dial_text, list) else str(dial_text)
     dial = parsers.parse_dial_log(dial_text or "")
 
+    system_raw = payload.get("system") if isinstance(payload.get("system"), dict) else {}
+    if not system_raw and isinstance(payload.get("router"), dict):
+        system_raw = payload["router"]
+    system = {
+        "model": system_raw.get("model") if isinstance(system_raw.get("model"), str) else None,
+        "firmware": system_raw.get("firmware") if isinstance(system_raw.get("firmware"), str) else None,
+        "uptime_s": _num(system_raw, "uptime_s", "uptime"),
+        "load1": _num(system_raw, "load1", "load_1"),
+        "load5": _num(system_raw, "load5", "load_5"),
+        "cores": _num(system_raw, "cores", "cpu_cores"),
+        "mem_total_mb": _num(system_raw, "mem_total_mb", "mem_total"),
+        "mem_free_mb": _num(system_raw, "mem_free_mb", "mem_available_mb", "mem_free"),
+        "wan_if": system_raw.get("wan_if") if isinstance(system_raw.get("wan_if"), str) else None,
+        "rx_errors": _num(system_raw, "rx_errors"),
+        "tx_errors": _num(system_raw, "tx_errors"),
+        "rx_dropped": _num(system_raw, "rx_dropped"),
+        "tx_dropped": _num(system_raw, "tx_dropped"),
+    }
+
     return {
         "plan_down": plan_down,
         "plan_up": plan_up,
@@ -185,6 +204,7 @@ def normalize(payload):
         "wifi": wifi,
         "lqc": lqc,
         "dial": dial,
+        "system": system,
         "meta": {
             "account": (payload.get("account") or "").strip() if isinstance(payload.get("account"), str) else "",
             "address": (payload.get("address") or "").strip() if isinstance(payload.get("address"), str) else "",
@@ -348,6 +368,47 @@ def diagnose(payload):
             add("optical", 4.4, "光功率 %.1f dBm，低于 -27 dBm 告警线" % rx_power)
         elif rx_power <= -25:
             add("optical", 2.2, "光功率 %.1f dBm，接近临界" % rx_power)
+
+    # ---------- 路由自身状态（OpenWrt 采集器导入） ----------
+    system = data["system"]
+    uptime_s = system["uptime_s"]
+    if uptime_s is not None:
+        _check(checks, "uptime_h", "路由运行时长", uptime_s / 3600.0, "h", 24, 1)
+        if uptime_s < 3600:
+            add("device", 1.4, "路由运行不足 1 小时（%.0f 分钟），刚重启/掉电会让拨号和 WiFi 一起不稳"
+                % (uptime_s / 60.0))
+        elif uptime_s < 86400:
+            notes.append("路由已运行 %.1f 小时，暂未发现长时间运行特征" % (uptime_s / 3600.0))
+
+    load1 = system["load1"]
+    if load1 is not None:
+        cores = system["cores"] or 1.0
+        load_ratio = load1 / cores if cores else load1
+        _check(checks, "load_ratio", "路由 CPU 负载", load_ratio, "x", 0.7, 1.0, lower_is_better=True)
+        if load_ratio >= 1.0:
+            add("device", 2.4, "路由 1 分钟负载 %.2f（%d 核），CPU 已跑满，NAT/测速会先撞设备上限"
+                % (load1, int(cores)))
+        elif load_ratio >= 0.7:
+            add("device", 1.0, "路由 1 分钟负载 %.2f（%d 核），偏高" % (load1, int(cores)))
+
+    mem_total, mem_free = system["mem_total_mb"], system["mem_free_mb"]
+    if mem_total and mem_free is not None:
+        free_pct = mem_free / mem_total * 100
+        _check(checks, "mem_free_pct", "路由可用内存", free_pct, "%", 20, 10)
+        if free_pct < 10:
+            add("device", 1.8, "路由可用内存仅 %.0f MB（%.0f%%），可能触发 OOM 或频繁回收" % (mem_free, free_pct))
+        elif free_pct < 20:
+            add("device", 0.8, "路由可用内存 %.0f MB（%.0f%%），偏紧" % (mem_free, free_pct))
+
+    errors = (system["rx_errors"] or 0) + (system["tx_errors"] or 0)
+    if errors and uptime_s:
+        per_hour = errors / max(uptime_s / 3600.0, 0.1)
+        _check(checks, "wan_err_rate", "WAN 接口错误", per_hour, "个/小时", 1, 20, lower_is_better=True)
+        if per_hour >= 20:
+            add("line_quality", 2.2, "WAN 接口累计 %d 个错误，约 %.0f 个/小时，先查网线/光路/接口协商"
+                % (errors, per_hour))
+        elif per_hour >= 1:
+            add("line_quality", 0.8, "WAN 接口约 %.0f 个错误/小时，虽不致命但值得留意" % per_hour)
 
     # ---------- 拨号日志 ----------
     if dial["lines"]:

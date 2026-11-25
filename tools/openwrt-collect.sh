@@ -1,16 +1,16 @@
 #!/bin/sh
 # netriage · OpenWrt 采集器
 #
-# 在路由器上把「PPPoE 拨号日志 + 无线信号」导成一份 JSON，
+# 在路由器上把「PPPoE 拨号日志 + 无线信号 + 路由自身负载/内存/WAN 错误」导成一份 JSON，
 # 拿到 netriage 页面 02「现场数据」的「导入 JSON」里直接喂进去。
 #
 # 用法：
-#   sh openwrt-collect.sh                 # 自动选第一个无线设备，WAN 接口 wan
+#   sh openwrt-collect.sh                 # 自动选第一个无线设备，WAN 接口 pppoe-wan
 #   sh openwrt-collect.sh phy0-ap0        # 指定无线设备
 #   sh openwrt-collect.sh phy0-ap0 pppoe-wan
 #   RX_POWER=-24.6 sh openwrt-collect.sh  # 光猫光功率（dBm），可选
 #
-# 只读：logread / iwinfo / date，不改任何配置。
+# 只读：logread / iwinfo / /proc / /sys，不改任何配置。
 
 set -u
 
@@ -52,6 +52,59 @@ if [ -n "$WIFI_DEV" ] && command -v iwinfo >/dev/null 2>&1; then
   esac
 fi
 
+# ---------- 路由自身状态 ----------
+jesc() {
+  sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' -e 's/\r//g' \
+    | awk 'BEGIN{ORS=""} {if (NR > 1) printf "\\n"; printf "%s", $0}'
+}
+
+MODEL=$(cat /tmp/sysinfo/model 2>/dev/null)
+FIRMWARE=$(awk -F= '/^DISTRIB_DESCRIPTION=/{gsub(/"/, "", $2); print $2}' /etc/openwrt_release 2>/dev/null)
+UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+LOAD=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+LOAD1=""; LOAD5=""; LOAD15=""
+if [ -n "$LOAD" ]; then
+  set -- $LOAD
+  LOAD1="${1:-}"; LOAD5="${2:-}"; LOAD15="${3:-}"
+fi
+MEM=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} END{if(a=="")a=f; printf "%d %d", t/1024, a/1024}' /proc/meminfo 2>/dev/null)
+MEM_TOTAL=""; MEM_FREE=""
+if [ -n "$MEM" ]; then
+  set -- $MEM
+  MEM_TOTAL="${1:-}"; MEM_FREE="${2:-}"
+fi
+RXE=$(cat "/sys/class/net/$WAN_IF/statistics/rx_errors" 2>/dev/null)
+TXE=$(cat "/sys/class/net/$WAN_IF/statistics/tx_errors" 2>/dev/null)
+RXD=$(cat "/sys/class/net/$WAN_IF/statistics/rx_dropped" 2>/dev/null)
+TXD=$(cat "/sys/class/net/$WAN_IF/statistics/tx_dropped" 2>/dev/null)
+
+SYS_JSON=""
+sys_num() {
+  [ -z "$2" ] && return
+  if [ -n "$SYS_JSON" ]; then SYS_JSON="$SYS_JSON, "; fi
+  SYS_JSON="$SYS_JSON\"$1\": $2"
+}
+sys_str() {
+  [ -z "$2" ] && return
+  if [ -n "$SYS_JSON" ]; then SYS_JSON="$SYS_JSON, "; fi
+  SYS_JSON="$SYS_JSON\"$1\": \"$(printf '%s' "$2" | jesc)\""
+}
+sys_str model "$MODEL"
+sys_str firmware "$FIRMWARE"
+sys_str wan_if "$WAN_IF"
+sys_num uptime_s "$UPTIME"
+sys_num cores "$CORES"
+sys_num load1 "$LOAD1"
+sys_num load5 "$LOAD5"
+sys_num load15 "$LOAD15"
+sys_num mem_total_mb "$MEM_TOTAL"
+sys_num mem_free_mb "$MEM_FREE"
+sys_num rx_errors "$RXE"
+sys_num tx_errors "$TXE"
+sys_num rx_dropped "$RXD"
+sys_num tx_dropped "$TXD"
+
 # ---------- JSON 输出 -------------
 jesc() {
   sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' -e 's/\r//g' \
@@ -91,5 +144,6 @@ EOF
 )"
 printf '  "lqc": "%s",\n' "$(printf '%s' "$LQC" | jesc)"
 printf '  "wifi": {%s},\n' "$WIFI_JSON"
+printf '  "system": {%s},\n' "$SYS_JSON"
 printf '  "dial_log": "%s"\n' "$(printf '%s' "$DIAL" | jesc)"
 printf '}\n'

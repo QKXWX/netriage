@@ -132,6 +132,7 @@
         </div>
       </div>
     </div>
+    <p id="routerMeta" class="router-meta hint small">路由状态：未导入。跑一次 tools/openwrt-collect.sh 并导入 JSON，会带上型号、固件、负载、内存与 WAN 错误计数。</p>
   </section>
 
   <!-- 03 诊断 -->
@@ -170,7 +171,13 @@
     <div class="actions left">
       <button id="btnHistRefresh" class="ghost">刷新</button>
       <button id="btnHistClear" class="ghost">清空历史</button>
+      <button id="btnHistCsv" class="ghost">导出 CSV</button>
       <span id="histMeta" class="hint small"></span>
+    </div>
+    <div id="histTrend" class="trend-box">趋势判定加载中…</div>
+    <div class="chart-wrap hour-wrap">
+      <canvas id="hourChart" width="1200" height="130"></canvas>
+      <span class="chart-cap">24 小时下行画像 · 黄色柱子为晚高峰（19–23 点）</span>
     </div>
     <div class="chart-wrap hist-wrap">
       <canvas id="histChart" width="1200" height="150"></canvas>

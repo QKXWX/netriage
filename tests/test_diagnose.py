@@ -107,3 +107,39 @@ def test_diagnose_is_deterministic():
     first.pop("generated_at")
     second.pop("generated_at")
     assert first == second
+
+
+def test_router_system_flags_cpu_memory_and_wan_errors():
+    payload = demo_payload()
+    payload["system"] = {
+        "model": "Xiaomi AX3000T",
+        "firmware": "OpenWrt 24.10",
+        "uptime_s": 900,
+        "load1": 2.2,
+        "cores": 2,
+        "mem_total_mb": 256,
+        "mem_free_mb": 12,
+        "wan_if": "pppoe-wan",
+        "rx_errors": 300,
+        "tx_errors": 120,
+    }
+    result = dg.diagnose(payload)
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["load_ratio"]["status"] == "crit"
+    assert checks["uptime_h"]["status"] == "crit"
+    assert checks["mem_free_pct"]["status"] == "crit"
+    assert checks["wan_err_rate"]["status"] == "crit"
+    assert "device" in [cause["id"] for cause in result["causes"]]
+    assert "line_quality" in [cause["id"] for cause in result["causes"]]
+
+
+def test_router_system_healthy_has_no_device_evidence():
+    payload = demo_payload()
+    payload["system"] = {"model": "Xiaomi AX3000T", "uptime_s": 864000,
+                         "load1": 0.2, "cores": 2, "mem_total_mb": 256,
+                         "mem_free_mb": 180, "rx_errors": 0, "tx_errors": 0}
+    result = dg.diagnose(payload)
+    checks = {item["key"]: item for item in result["checks"]}
+    assert checks["load_ratio"]["status"] == "ok"
+    assert checks["uptime_h"]["status"] == "ok"
+    assert checks["mem_free_pct"]["status"] == "ok"

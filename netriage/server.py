@@ -7,6 +7,8 @@
 部署在哪台机器，就测到哪台机器——这也是它比公共测速站更贴近实际的地方。
 """
 
+import csv
+import io
 import json
 import mimetypes
 import os
@@ -21,6 +23,7 @@ from . import __version__
 from .diagnose import diagnose, ticket_for
 from .report import render_report
 from .storage import HistoryStore, default_db_path
+from .trend import analyze
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_UPLOAD = 256 * 1024 * 1024      # 单次上传上限 256MB
@@ -112,6 +115,12 @@ class NetriageHandler(BaseHTTPRequestHandler):
         if path == "/api/history":
             self._history_list(query)
             return
+        if path == "/api/history/trend":
+            self._history_trend(query)
+            return
+        if path == "/api/history/export.csv":
+            self._history_csv()
+            return
         if path.startswith("/api/history/"):
             self._history_item(path[len("/api/history/"):])
             return
@@ -138,6 +147,47 @@ class NetriageHandler(BaseHTTPRequestHandler):
             "count": self.server.store.count(),
             "runs": self.server.store.list(limit=limit, offset=offset),
         })
+
+    def _history_trend(self, query):
+        if self.server.store is None:
+            self._json(503, {"ok": False, "error": "历史存档不可用"})
+            return
+        plan = None
+        if query.get("plan_down"):
+            try:
+                plan = float(query["plan_down"][0])
+            except (TypeError, ValueError):
+                plan = None
+        runs = self.server.store.list(limit=200)
+        self._json(200, {"ok": True, "count": len(runs), "trend": analyze(runs, plan_down=plan)})
+
+    def _history_csv(self):
+        if self.server.store is None:
+            self._json(503, {"ok": False, "error": "历史存档不可用"})
+            return
+        runs = self.server.store.list(limit=200)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["id", "created_at", "health", "verdict", "cause", "plan_down",
+                         "down_mbps", "up_mbps", "down_single_mbps", "latency_idle_ms",
+                         "latency_loaded_ms", "bufferbloat_ms", "jitter_ms", "loss_pct"])
+        for row in runs:
+            writer.writerow([
+                row.get("id"), row.get("created_at"), row.get("health"), row.get("verdict"),
+                row.get("cause_name"), row.get("plan_down"), row.get("down_mbps"),
+                row.get("up_mbps"), row.get("down_single_mbps"), row.get("latency_idle_ms"),
+                row.get("latency_loaded_ms"), row.get("bufferbloat_ms"), row.get("jitter_ms"),
+                row.get("loss_pct"),
+            ])
+        data = buffer.getvalue().encode("utf-8-sig")   # BOM 让 Excel 直接认出中文
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", 'attachment; filename="netriage-history-%s.csv"' % stamp)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _history_item(self, raw_id):
         if self.server.store is None:

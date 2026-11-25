@@ -27,6 +27,7 @@ const state = {
   abort: null,
   chart: [],
   history: [],
+  system: null,
 };
 
 const DEMO_MEASURE = {
@@ -468,6 +469,7 @@ function buildPayload() {
     address: $('address').value,
     isp: $('isp').value,
     contact: $('contact').value,
+    system: state.system || null,
   };
 }
 
@@ -520,7 +522,7 @@ function drawHistChart(runs, planDown) {
   const W = cv.width;
   const H = cv.height;
   ctx2.clearRect(0, 0, W, H);
-  const list = (runs || []).slice().reverse();
+  const list = (runs || []).slice().sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
   if (!list.length) {
     ctx2.fillStyle = '#5d7481';
     ctx2.font = '13px ui-monospace, Consolas, monospace';
@@ -586,6 +588,75 @@ function drawHistChart(runs, planDown) {
   ctx2.fillText(lastText, W - padR - width, H - 6);
 }
 
+function drawHourChart(hourly, planDown) {
+  const cv = $('hourChart');
+  if (!cv) return;
+  const ctx2 = cv.getContext('2d');
+  const W = cv.width;
+  const H = cv.height;
+  ctx2.clearRect(0, 0, W, H);
+  const list = hourly || [];
+  if (!list.length) return;
+  const padL = 48;
+  const padR = 14;
+  const padT = 24;
+  const padB = 20;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const max = Math.max(planDown || 0, ...list.map((h) => h.down_median || 0), 1) * 1.08;
+  const bw = plotW / 24;
+
+  if (planDown) {
+    const y = padT + plotH - (planDown / max) * plotH;
+    ctx2.setLineDash([6, 5]);
+    ctx2.strokeStyle = 'rgba(243,178,75,.4)';
+    ctx2.beginPath();
+    ctx2.moveTo(padL, y);
+    ctx2.lineTo(W - padR, y);
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+  }
+
+  list.forEach((item, hour) => {
+    const value = item.down_median || 0;
+    const barH = Math.max(value ? 2 : 0, (value / max) * plotH);
+    const x = padL + hour * bw + bw * 0.18;
+    const w = Math.max(2, bw * 0.64);
+    const y = padT + plotH - barH;
+    const evening = hour >= 19 && hour <= 23;
+    ctx2.fillStyle = value
+      ? (evening ? 'rgba(243,178,75,.8)' : 'rgba(45,212,191,.62)')
+      : 'rgba(93,116,129,.12)';
+    ctx2.fillRect(x, y, w, barH || 2);
+    if (hour % 3 === 0) {
+      ctx2.fillStyle = '#5d7481';
+      ctx2.font = '10px ui-monospace, Consolas, monospace';
+      ctx2.fillText(String(hour).padStart(2, '0'), x, H - 4);
+    }
+  });
+}
+
+function renderTrend(trend) {
+  const box = $('histTrend');
+  if (!box) return;
+  drawHourChart(trend && trend.hourly, num('planDown', 0));
+  if (!trend || !trend.headline) {
+    box.className = 'trend-box';
+    box.textContent = '趋势暂不可用。';
+    return;
+  }
+  const tone = trend.verdict === 'stable' ? 'ok' : (trend.verdict === 'insufficient' ? '' : 'warn');
+  box.className = 'trend-box ' + tone;
+  const evidence = (trend.evidence || []).map((item) => '<li>' + esc(item) + '</li>').join('');
+  box.innerHTML = [
+    '<div class="trend-head"><span class="trend-kicker">趋势判定</span>',
+    '<strong>' + esc(trend.headline) + '</strong></div>',
+    evidence ? '<ul class="trend-ev">' + evidence + '</ul>' : '',
+    '<span class="hint small">判定码 ' + esc(trend.verdict) + ' · 基于最近 ' +
+      (trend.stats && trend.stats.count ? trend.stats.count : 0) + ' 次存档</span>',
+  ].join('');
+}
+
 function renderHistory(runs, count) {
   const out = $('histOut');
   drawHistChart(runs, num('planDown', 0));
@@ -646,6 +717,13 @@ async function loadHistory() {
     $('histOut').className = 'diag-empty';
     $('histOut').textContent = '历史加载失败：' + err.message;
   }
+  try {
+    const tr = await api('/api/history/trend');
+    renderTrend(tr.trend);
+  } catch (err) {
+    $('histTrend').className = 'trend-box';
+    $('histTrend').textContent = '趋势判定失败：' + err.message;
+  }
 }
 
 async function openRun(id) {
@@ -693,6 +771,31 @@ async function downloadReport() {
   setStage('报告已生成，可直接发给运营商或存档');
 }
 
+function renderRouterMeta(sys) {
+  const el = $('routerMeta');
+  if (!el) return;
+  if (!sys || typeof sys !== 'object') {
+    el.textContent = '路由状态：未导入。跑一次 tools/openwrt-collect.sh 并导入 JSON，会带上型号、固件、负载、内存与 WAN 错误计数。';
+    return;
+  }
+  const bits = [];
+  if (sys.model) bits.push(sys.model);
+  if (sys.firmware) bits.push(sys.firmware);
+  if (sys.uptime_s !== undefined && sys.uptime_s !== null) {
+    bits.push('已运行 ' + (Number(sys.uptime_s) / 3600).toFixed(1) + ' h');
+  }
+  if (sys.load1 !== undefined && sys.load1 !== null) {
+    bits.push('负载 ' + sys.load1 + (sys.cores ? ' / ' + sys.cores + ' 核' : ''));
+  }
+  if (sys.mem_total_mb && sys.mem_free_mb !== undefined) {
+    bits.push('可用内存 ' + sys.mem_free_mb + ' / ' + sys.mem_total_mb + ' MB');
+  }
+  if ((sys.rx_errors || 0) + (sys.tx_errors || 0) > 0) {
+    bits.push('WAN 错误 ' + ((sys.rx_errors || 0) + (sys.tx_errors || 0)) + ' 个');
+  }
+  el.textContent = bits.length ? '路由状态：' + bits.join(' · ') : '路由状态：已导入，但没有可展示的字段。';
+}
+
 function applyPayload(data) {
   const done = [];
   if (data.plan) {
@@ -713,6 +816,11 @@ function applyPayload(data) {
     if (wifi.tx_rate !== undefined) $('wRate').value = wifi.tx_rate;
     if (wifi.band) $('wBand').value = wifi.band === '2.4G' ? '2.4G' : '5G';
     done.push('无线信号');
+  }
+  if (data.system && typeof data.system === 'object') {
+    state.system = data.system;
+    renderRouterMeta(data.system);
+    done.push('路由状态');
   }
   if (data.lqc !== undefined) {
     $('lqc').value = typeof data.lqc === 'string' ? data.lqc : JSON.stringify(data.lqc);
@@ -811,6 +919,7 @@ function bind() {
   });
   $('btnHistRefresh').addEventListener('click', loadHistory);
   $('btnHistClear').addEventListener('click', clearHistory);
+  $('btnHistCsv').addEventListener('click', () => { window.location.href = '/api/history/export.csv'; });
 
   window.addEventListener('resize', fitCanvas);
 }

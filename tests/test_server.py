@@ -120,3 +120,33 @@ def test_report_endpoint_returns_html(port):
     assert "attachment" in (response.getheader("Content-Disposition") or "")
     assert "宽带质量诊断报告" in html
     conn.close()
+
+
+def test_trend_endpoint(port):
+    from netriage.samples import demo_payload
+    body = json.dumps(demo_payload()).encode("utf-8")
+    request(port, "POST", "/api/diagnose", body=body, headers={"Content-Type": "application/json"})
+    status, data, _ = request(port, "GET", "/api/history/trend?plan_down=1000")
+    payload = json.loads(data)
+    assert status == 200 and payload["ok"] is True
+    assert payload["trend"]["verdict"] in ("insufficient", "stable", "recent_drop",
+                                           "sustained_shortfall", "peak_degradation",
+                                           "bufferbloat", "packet_loss")
+    assert payload["trend"]["stats"]["plan_down"] == 1000.0
+
+
+def test_history_csv_export(port):
+    from netriage.samples import demo_payload
+    body = json.dumps(demo_payload()).encode("utf-8")
+    request(port, "POST", "/api/diagnose", body=body, headers={"Content-Type": "application/json"})
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("GET", "/api/history/export.csv")
+    response = conn.getresponse()
+    data = response.read()
+    assert response.status == 200
+    assert "text/csv" in (response.getheader("Content-Type") or "")
+    assert "attachment" in (response.getheader("Content-Disposition") or "")
+    text = data.decode("utf-8-sig")
+    assert text.splitlines()[0].startswith("id,created_at,health,verdict")
+    assert len(text.splitlines()) == 2
+    conn.close()

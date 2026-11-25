@@ -18,6 +18,8 @@
 
 ![历史与趋势](docs/screenshot-history.png)
 
+![趋势判定与 24 小时画像](docs/screenshot-trend.png)
+
 ![导出的 HTML 报告](docs/screenshot-report.png)
 
 零第三方依赖（Python 标准库 + 原生 JS），一个进程同时是测速服务端和诊断服务端。
@@ -105,6 +107,7 @@ ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
 - **拨号日志**：光猫 / 路由的 PPPoE 日志粘贴进来。能识别 `PADI/PADO`、`Modem hangup`、`LCP timeout`、`691/678/651` 等错误码，统计拨号次数与掉线次数。
 - **LQC / 无线信号**：支持 JSON、`{"data": {...}}` 嵌套、以及 `RSRP=-96 SINR=17 tx_rate=866 band=5G` 这种键值文本；中英文别名都认（信噪比/信号强度/重传率/信道占用/协商速率/光功率/频段）。
 - **无线手填**：没有日志时，从路由后台抄 RSSI、SNR、重传率、信道占用、协商速率即可。
+- **路由自身状态**：采集器同时读 `/proc` 与 `/sys`，带上型号、固件、运行时长、1/5/15 分钟负载、核数、可用内存、WAN 接口收发错误与丢包计数；诊断会据此判断「刚重启/CPU 跑满/内存见底/接口错误」是不是设备或线缆问题，页面也会显示一行路由状态。
 
 ### 03 诊断
 
@@ -134,6 +137,17 @@ ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
 每次诊断自动写入本地 SQLite（默认 `data/netriage.db`），页面用柱状图对比最近 20 次下行速率，虚线是签约带宽；表格里给出健康分、上下行、延迟、满载增量，以及**相对上一次的变化**。点任意一行可回看当时的测量与诊断结论。
 
 单次测速只能回答「现在慢」，趋势才能回答「是不是一直慢、晚高峰是否更糟」——这是和运营商扯皮时最有用的一张图。
+
+面板顶部直接给**一句趋势判定**，不是让你自己看柱子：最近 3 次 vs 更早基线、晚高峰（19–23 点）vs 白天（9–18 点）、整体达标率、最近 5 次 bufferbloat 与丢包，五类证据分别计算后给结论（`recent_drop` / `peak_degradation` / `sustained_shortfall` / `bufferbloat` / `packet_loss`）。下面是 24 小时下行画像，黄色柱子标出晚高峰；「导出 CSV」带 BOM，Excel 直接打开不乱码。
+
+同样的判定也能在命令行跑，适合把结论直接贴进报障记录：
+
+```bash
+netriage trend --db data/netriage.db          # 人读
+netriage trend --db data/netriage.db --json  # 机器读，含 stats 与 hourly[24]
+```
+
+阈值写死在 `netriage/trend.py` 且可复现：晚高峰下行 ≤ 白天 75%、最近 3 次比基线跌 ≥ 15%、整体达标率 < 80%、满载增量 ≥ 150 ms、最近 5 次丢包 ≥ 2%。样本不足 3 次时明确返回「insufficient」，不硬编结论。
 
 ### 06 命令行探测与定时复测（cron / 路由器）
 
@@ -183,6 +197,8 @@ netriage watch --server http://192.168.1.10:8080 --interval 600 --count 6 --json
 | POST | `/api/upload` | 接收原始字节（上限 256 MB），返回字节数与耗时 |
 | POST | `/api/diagnose` | 传入 `{plan, measure, wifi, lqc, dial_log, account...}`，返回结论/检查表/指标；默认存档，`?save=0` 不存 |
 | GET | `/api/history?limit=20&offset=0` | 历史摘要列表 + 总数 |
+| GET | `/api/history/trend?plan_down=1000` | 趋势判定：`verdict` / `headline` / `evidence` / `stats` / `hourly[24]` |
+| GET | `/api/history/export.csv` | 导出最近 200 条为 CSV（UTF-8 BOM，Excel 直开） |
 | GET | `/api/history/<id>` | 单条完整记录（原始载荷 + 诊断结果） |
 | POST | `/api/history/clear` | 清空存档，返回删除条数 |
 | POST | `/api/ticket` | 同上，返回纯文本报障单 |
@@ -244,16 +260,17 @@ location / {
 ```
 netriage/
 ├── netriage/
-│   ├── __main__.py      # CLI：serve / diagnose / probe / watch / history / demo / version
+│   ├── __main__.py      # CLI：serve / diagnose / probe / watch / trend / history / demo / version
 │   ├── server.py        # 标准库 HTTP 服务 + 测速端点
 │   ├── probe.py         # 命令行主动探测与定时复测（bufferbloat）
 │   ├── diagnose.py      # 规则引擎、检查表、健康分、工单
 │   ├── parsers.py       # 拨号日志 / LQC / 无线文本解析
 │   ├── samples.py       # 示例测量
 │   ├── storage.py       # SQLite 历史存档
+│   ├── trend.py         # 趋势判定（分时 / 近期 / 长期 / 丢包 / bufferbloat）
 │   ├── report.py        # 单文件 HTML 报告
 │   └── web/             # 前端（原生 JS，无构建）
-├── tests/               # 47 项 pytest
+├── tests/               # 58 项 pytest
 ├── tools/
 │   └── openwrt-collect.sh  # OpenWrt 拨号日志 + 无线信号采集
 ├── examples/            # 可直接跑的测量样例
@@ -268,11 +285,11 @@ netriage/
 
 ```bash
 pip install pytest ruff
-pytest        # 47 passed
+pytest        # 58 passed
 ruff check .
 ```
 
-测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、工单文本、HTTP 端点字节数、历史存档增删查、报告转义、命令行探测的 RTT/吞吐/丢包、watch 每轮入库、CLI 子命令与服务冒烟。
+测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、路由负载/内存/WAN 错误检查、工单文本、HTTP 端点字节数、历史存档增删查、趋势判定的分时/近期/长期/丢包/bufferbloat 分支、报告转义、命令行探测的 RTT/吞吐/丢包、watch 每轮入库、CLI 子命令与服务冒烟。
 
 ---
 

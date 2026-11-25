@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.0
+
+### 新增
+
+- **趋势判定引擎**（`trend.py`）：不再让人自己盯柱子看。把历史摘要按时间排序后，分别计算「最近 3 次 vs 更早基线」「晚高峰（19–23 点）vs 白天（9–18 点）」「整体达标率」「最近 5 次 bufferbloat / 丢包」，输出 `verdict`（`recent_drop` / `peak_degradation` / `sustained_shortfall` / `bufferbloat` / `packet_loss` / `stable` / `insufficient`）、一句中文结论、逐条证据和 `stats`。样本不足 3 次时明确返回 `insufficient`，不硬编。
+- **24 小时下行画像**：前端新增 24 根柱子按小时聚合中位数，晚高峰黄色标注、签约带宽虚线；「下行历史」柱状图改为按 `created_at` 排序，导入旧数据也不会画乱序。
+- **CSV 导出**：`GET /api/history/export.csv` 导出最近 200 条（UTF-8 BOM，Excel 直开），页面新增「导出 CSV」按钮。
+- **CLI**：`netriage trend --db data/netriage.db [--plan-down 1000] [--json]`，人读输出结论 + 证据 + 样本，机器读输出完整 `stats` 与 `hourly[24]`。
+- **路由自身状态**：`tools/openwrt-collect.sh` 新增 `system` 块（型号、固件、运行时长、1/5/15 分钟负载、核数、可用内存、WAN 收发错误/丢包）；诊断新增运行时长、CPU 负载、可用内存、WAN 错误率四项检查，分别给 `device` 与 `line_quality` 证据；页面 02 显示路由状态一行，导入 JSON 自动带出。
+
+### 新增接口
+
+- `GET /api/history/trend?plan_down=1000`
+- `GET /api/history/export.csv`
+
+### 测试
+
+- 新增 `tests/test_trend.py`（7 项：insufficient / 晚高峰 / 近期下跌 / 长期不达标 / bufferbloat / 丢包 / stable 与 hourly 形状）、两个接口测试与两个路由状态测试，共 **58 passed**。
+
 ## v0.2.0
 
 ### 新增

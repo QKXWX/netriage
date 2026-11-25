@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""命令行入口：serve / diagnose / probe / watch / history / demo / version。"""
+"""命令行入口：serve / diagnose / probe / watch / trend / history / demo / version。"""
 
 import argparse
 import json
@@ -13,6 +13,7 @@ from .probe import diagnose_remote, probe_payload, watch
 from .report import render_report
 from .server import serve
 from .storage import HistoryStore, default_db_path
+from .trend import analyze
 
 
 def _load(path):
@@ -69,6 +70,21 @@ def _print_measure(measure, server):
     print("")
 
 
+def _print_trend(trend):
+    print("")
+    print("  结论  %s" % trend["headline"])
+    print("  判定  %s" % trend["verdict"])
+    for ev in trend["evidence"]:
+        print("   · %s" % ev)
+    stats = trend["stats"]
+    print("  样本  %d 次 · 下行中位 %s Mbps · 签约 %s Mbps" % (
+        stats.get("count", 0), stats.get("down_median"), stats.get("plan_down")))
+    if stats.get("evening_samples"):
+        print("  分时  晚高峰 %s 次 / 白天 %s 次" % (
+            stats.get("evening_samples"), stats.get("day_samples")))
+    print("")
+
+
 def _plan_from_args(args):
     plan = {}
     if getattr(args, "plan_down", None):
@@ -120,6 +136,12 @@ def main(argv=None):
     history_cmd.add_argument("--limit", type=int, default=20)
     history_cmd.add_argument("--json", action="store_true")
     history_cmd.add_argument("--db", default=None)
+
+    trend_cmd = subs.add_parser("trend", help="把历史存档判成一句可以对质的趋势结论")
+    trend_cmd.add_argument("--limit", type=int, default=200, help="最多读取多少条，默认 200")
+    trend_cmd.add_argument("--plan-down", type=float, default=None, help="覆盖签约下行 Mbps")
+    trend_cmd.add_argument("--json", action="store_true")
+    trend_cmd.add_argument("--db", default=None)
 
     subs.add_parser("demo", help="用内置样例跑一遍诊断")
     subs.add_parser("version", help="打印版本")
@@ -182,6 +204,23 @@ def main(argv=None):
         finally:
             if handle:
                 handle.close()
+        return 0
+
+    if cmd == "trend":
+        db_path = args.db or default_db_path()
+        if not os.path.exists(db_path):
+            print("还没有历史存档：%s" % db_path)
+            return 0
+        store = HistoryStore(db_path)
+        runs = store.list(limit=args.limit)
+        result = analyze(runs, plan_down=args.plan_down)
+        if args.json:
+            print(json.dumps({"db": db_path, "count": store.count(), "trend": result},
+                             ensure_ascii=False, indent=2))
+        else:
+            print("存档 %s · 共 %d 条（本次分析 %d 条）" % (db_path, store.count(), len(runs)))
+            _print_trend(result)
+        store.close()
         return 0
 
     if cmd == "history":
