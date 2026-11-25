@@ -2,6 +2,12 @@
 
 > 测速只告诉你「慢」，netriage 告诉你「慢在哪」。
 
+[![CI](https://github.com/QKXWX/netriage/actions/workflows/ci.yml/badge.svg)](https://github.com/QKXWX/netriage/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/QKXWX/netriage?color=2dd4bf)](https://github.com/QKXWX/netriage/releases)
+![Python](https://img.shields.io/badge/python-3.9%2B-3776ab)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Dependencies](https://img.shields.io/badge/dependencies-0-lightgrey)
+
 浏览器里跑真实测速，把上行/下行、单流/多流、空闲延迟、抖动、探测丢包、满载延迟增量一起采下来；
 叠加光猫拨号日志与 LQC/无线信号，用一套可复现的加权规则判断根因是**运营商端口、QoS 限速、上联拥塞、线路丢包、WiFi 干扰、光衰、拨号认证**还是**设备瓶颈**，最后生成一张能直接发给运营商的报障工单。
 
