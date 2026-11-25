@@ -80,7 +80,37 @@ pre.ticket{white-space:pre-wrap;word-break:break-all;background:#0b141a;color:#d
 """
 
 
-def render_report(payload, result, generated_at=None):
+def _trend_section(trend):
+    """把趋势判定渲染成报告里的「历史对照」；没有足够样本就整节省略。"""
+    if not trend or (trend.get("stats") or {}).get("count", 0) < 3:
+        return "", "04"
+    stats = trend.get("stats") or {}
+    rows = [
+        ("存档样本", "%s 次" % stats.get("count")),
+        ("下行中位数", _num(stats.get("down_median"), 1, "Mbps")),
+        ("签约下行", _num(stats.get("plan_down"), 0, "Mbps")),
+        ("整体达标率", _num((stats.get("plan_ratio") or 0) * 100, 0, "%") if stats.get("plan_ratio") else "—"),
+        ("最近 3 次变化", _num(stats.get("recent_change_pct"), 1, "%") if stats.get("recent_change_pct") is not None else "—"),
+        ("晚高峰 / 白天", _num(stats.get("evening_day_ratio"), 2, "x") if stats.get("evening_day_ratio") else "—"),
+        ("满载增量中位数", _num(stats.get("bufferbloat_median"), 1, "ms")),
+    ]
+    body = "".join("<tr><td>%s</td><td class=\"val\">%s</td></tr>" % (_esc(name), _esc(value))
+                   for name, value in rows)
+    evidence = "".join("<li>%s</li>" % _esc(item) for item in (trend.get("evidence") or []))
+    html_text = """
+  <h3><span>04</span>历史对照</h3>
+  <p style="margin:0 0 8px;font-size:14px"><strong>%s</strong></p>
+  %s
+  <table><thead><tr><th>指标</th><th>数值</th></tr></thead><tbody>%s</tbody></table>
+""" % (
+        _esc(trend.get("headline")),
+        ("<ul class=\"note\">%s</ul>" % evidence) if evidence else "",
+        body,
+    )
+    return html_text, "05"
+
+
+def render_report(payload, result, generated_at=None, trend=None):
     """返回完整 HTML 字符串。payload 为原始输入，result 为 diagnose() 的输出。"""
     payload = payload or {}
     result = result or {}
@@ -156,6 +186,8 @@ def render_report(payload, result, generated_at=None):
     notes = result.get("notes") or []
     notes_html = "".join("<li>%s</li>" % _esc(note) for note in notes) if notes else ""
 
+    trend_html, ticket_no = _trend_section(trend)
+
     info_bits = []
     for label, key in (("宽带账号", "account"), ("运营商", "isp"), ("安装地址", "address"), ("联系人", "contact")):
         if payload.get(key):
@@ -203,8 +235,9 @@ def render_report(payload, result, generated_at=None):
   <h3><span>03</span>根因判断</h3>
   %(causes)s
   %(notes)s
+  %(trend)s
 
-  <h3><span>04</span>报障工单</h3>
+  <h3><span>%(ticket_no)s</span>报障工单</h3>
   <pre class="ticket">%(ticket)s</pre>
 
   <div class="note">
@@ -233,5 +266,7 @@ def render_report(payload, result, generated_at=None):
         "checks": checks_html,
         "causes": causes_html,
         "notes": ("<ul class=\"note\">%s</ul>" % notes_html) if notes_html else "",
+        "trend": trend_html,
+        "ticket_no": ticket_no,
         "ticket": _esc(ticket),
     }

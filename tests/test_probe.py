@@ -77,3 +77,25 @@ def test_watch_stores_each_round(server):
     assert rounds[0]["id"] is not None
     assert control.store.count() == 1
     assert rounds[0]["result"]["health"] >= 0
+
+
+def test_watch_alerts_once_per_cooldown(server, monkeypatch):
+    base, _ = server
+    sent = []
+    monkeypatch.setattr("netriage.probe.notify.send",
+                        lambda url, result, measure: sent.append((url, result["health"], measure["down_mbps"])) or 200)
+    watch(base, interval=0, count=2, plan={"down": 1000, "up": 100},
+          download_mb=0.3, upload_mb=0.15, ping_count=3, load_cap_mb=2, sleep=lambda _: None,
+          webhook="http://example.test/hook", alert_health=100, alert_cooldown=9999)
+    assert len(sent) == 1
+    assert sent[0][0] == "http://example.test/hook"
+
+
+def test_watch_does_not_alert_when_healthy(server, monkeypatch):
+    base, _ = server
+    sent = []
+    monkeypatch.setattr("netriage.probe.notify.send", lambda *args: sent.append(args) or 200)
+    watch(base, interval=0, count=1, plan={"down": 1000, "up": 100},
+          download_mb=0.3, upload_mb=0.15, ping_count=3, load_cap_mb=2, sleep=lambda _: None,
+          webhook="http://example.test/hook", alert_health=0, alert_cooldown=0)
+    assert sent == []

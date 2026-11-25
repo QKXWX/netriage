@@ -131,6 +131,9 @@ def main(argv=None):
     watch_cmd.add_argument("--count", type=int, default=0, help="测多少轮，0 表示一直跑")
     watch_cmd.add_argument("--jsonl", metavar="PATH", help="把每轮结果追加写成 JSONL")
     watch_cmd.add_argument("--load-cap", type=float, default=16.0, help="每轮四流负载最大 MB，默认 16")
+    watch_cmd.add_argument("--webhook", metavar="URL", help="劣化时 POST 告警到该 URL（飞书/钉钉/Slack 自动适配包体）")
+    watch_cmd.add_argument("--alert-health", type=int, default=60, help="健康分低于该值才告警，默认 60")
+    watch_cmd.add_argument("--alert-cooldown", type=int, default=1800, help="两次告警最小间隔秒，默认 1800")
 
     history_cmd = subs.add_parser("history", help="查看历史测量存档")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -200,7 +203,9 @@ def main(argv=None):
         try:
             watch(args.server, interval=args.interval, count=args.count, plan=plan,
                   download_mb=args.download, upload_mb=args.upload, ping_count=args.ping,
-                  load_cap_mb=args.load_cap, out=handle)
+                  load_cap_mb=args.load_cap, out=handle,
+                  webhook=args.webhook, alert_health=args.alert_health,
+                  alert_cooldown=args.alert_cooldown)
         finally:
             if handle:
                 handle.close()

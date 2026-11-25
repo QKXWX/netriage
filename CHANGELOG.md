@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0
+
+### 新增
+
+- **watch 告警**：`netriage watch --webhook URL --alert-health 60 --alert-cooldown 1800`，健康分跌破阈值时 POST 一次，冷却期内不重复；告警失败只打印一行，不终止看守。
+- **聊天机器人自适应**：`netriage/notify.py` 按 URL 自动套飞书（`open.feishu.cn`）/ 钉钉（`oapi.dingtalk.com`）/ Slack（`hooks.slack.com`）的文本包体，其它地址发通用 JSON（含 health、verdict、前三条根因与本轮 measure）。
+- 告警文本含健康分、结论、下行/上行/延迟/抖动/丢包，手机上直接能看出是哪条链路劣化。
+- **HTML 报告历史对照**：服务端存档 ≥3 次时，`POST /api/report` 自动附上趋势结论、证据和样本/达标率/晚高峰比值；样本不足则整节省略，不硬凑。
+
+### 测试
+
+- 新增 `tests/test_notify.py`（4 项：摘要、紧凑数据、三种机器人包体、真实 HTTP POST）、2 项 watch 告警测试（冷却只发一次、健康时不发）与 3 项报告历史对照测试，共 **67 passed**。
+
 ## v0.3.0
 
 ### 新增

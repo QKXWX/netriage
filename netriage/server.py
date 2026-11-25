@@ -303,7 +303,12 @@ class NetriageHandler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "JSON 解析失败：%s" % exc})
                 return
             result = payload.get("result") or diagnose(payload)
-            html_text = render_report(payload, result)
+            trend = None
+            if self.server.store is not None:
+                runs = self.server.store.list(limit=200)
+                if len(runs) >= 3:
+                    trend = analyze(runs)
+            html_text = render_report(payload, result, trend=trend)
             filename = "netriage-report-%s.html" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             self._send(200, html_text, "text/html; charset=utf-8", {
                 "Content-Disposition": 'attachment; filename="%s"' % filename,

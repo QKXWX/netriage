@@ -40,3 +40,27 @@ def test_report_shows_health_and_checks():
     assert str(result["health"]) in html
     for item in result["checks"][:3]:
         assert item["name"] in html
+
+
+def test_report_includes_history_trend_when_provided():
+    payload = demo_payload()
+    result = diagnose(payload)
+    trend = {
+        "verdict": "peak_degradation",
+        "headline": "晚高峰下行只有白天的 55%，更像上联拥塞",
+        "evidence": ["晚高峰 5 次下行中位数 505.0 Mbps，白天 6 次 924.5 Mbps。"],
+        "stats": {"count": 12, "down_median": 873.5, "plan_down": 1000,
+                  "plan_ratio": 0.87, "recent_change_pct": -46.0,
+                  "evening_day_ratio": 0.55, "bufferbloat_median": 303.6},
+    }
+    html = render_report(payload, result, trend=trend)
+    assert "历史对照" in html
+    assert "晚高峰下行只有白天的 55%" in html
+    assert "<span>05</span>报障工单" in html
+
+
+def test_report_skips_trend_with_few_samples():
+    payload = demo_payload()
+    result = diagnose(payload)
+    html = render_report(payload, result, trend={"stats": {"count": 2}, "headline": "样本不足"})
+    assert "历史对照" not in html

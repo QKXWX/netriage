@@ -130,7 +130,7 @@ ssh root@192.168.1.1 'sh /tmp/openwrt-collect.sh'   # 或加设备名：phy0-ap0
 
 把套餐、实测值、诊断依据、已做排查一次写清，避免客服循环让你「再测一次」。可复制、可下载 txt。工单里的「已做排查」标注了**未做的条目请删除**，不替你编造事实。
 
-同一份数据也能导出**单文件 HTML 报告**（内联样式、无外链脚本，断网可看、打印白底黑字），适合发给运营商、贴进工单系统或留档。
+同一份数据也能导出**单文件 HTML 报告**（内联样式、无外链脚本，断网可看、打印白底黑字），适合发给运营商、贴进工单系统或留档。服务端存档 ≥3 次时，报告会自动多一节「历史对照」，把趋势结论、证据和分时比值一起写进去，不用再单独截一张趋势图。
 
 ### 05 历史与趋势
 
@@ -173,7 +173,14 @@ netriage watch --server http://192.168.1.10:8080 \
 
 # 只跑 6 轮（一小时），并把每轮结果追加进 JSONL
 netriage watch --server http://192.168.1.10:8080 --interval 600 --count 6 --jsonl watch.jsonl
+
+# 健康分跌破 60 就推告警；同一问题 30 分钟内只推一次
+netriage watch --server http://192.168.1.10:8080 --interval 600 \
+  --webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxx \
+  --alert-health 60 --alert-cooldown 1800
 ```
+
+`--webhook` 支持通用 JSON，也能按 URL 自动适配飞书 / 钉钉 / Slack 自定义机器人的包体；发送内容含健康分、结论、前三条根因和本轮实测。网络断了或 webhook 挂了只打印一行，不会中断复测。
 
 定时任务示例（跑在路由器或常开的小主机上，测的是「这台机器 → netriage 服务」）：
 
@@ -268,9 +275,10 @@ netriage/
 │   ├── samples.py       # 示例测量
 │   ├── storage.py       # SQLite 历史存档
 │   ├── trend.py         # 趋势判定（分时 / 近期 / 长期 / 丢包 / bufferbloat）
+│   ├── notify.py        # watch 告警外发（飞书/钉钉/Slack/通用 JSON）
 │   ├── report.py        # 单文件 HTML 报告
 │   └── web/             # 前端（原生 JS，无构建）
-├── tests/               # 58 项 pytest
+├── tests/               # 67 项 pytest
 ├── tools/
 │   └── openwrt-collect.sh  # OpenWrt 拨号日志 + 无线信号采集
 ├── examples/            # 可直接跑的测量样例
@@ -285,11 +293,11 @@ netriage/
 
 ```bash
 pip install pytest ruff
-pytest        # 58 passed
+pytest        # 67 passed
 ruff check .
 ```
 
-测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、路由负载/内存/WAN 错误检查、工单文本、HTTP 端点字节数、历史存档增删查、趋势判定的分时/近期/长期/丢包/bufferbloat 分支、报告转义、命令行探测的 RTT/吞吐/丢包、watch 每轮入库、CLI 子命令与服务冒烟。
+测试覆盖：日志错误码识别、LQC 三种格式、诊断八类根因、健康分边界、路由负载/内存/WAN 错误检查、工单文本、HTTP 端点字节数、历史存档增删查、趋势判定的分时/近期/长期/丢包/bufferbloat 分支、告警包体与 webhook 发送、watch 每轮入库与告警冷却、报告历史对照、报告转义、命令行探测的 RTT/吞吐/丢包、CLI 子命令与服务冒烟。
 
 ---
 

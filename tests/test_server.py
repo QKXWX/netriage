@@ -150,3 +150,18 @@ def test_history_csv_export(port):
     assert text.splitlines()[0].startswith("id,created_at,health,verdict")
     assert len(text.splitlines()) == 2
     conn.close()
+
+
+def test_report_includes_history_trend_after_three_runs(port):
+    from netriage.samples import demo_payload
+    body = json.dumps(demo_payload()).encode("utf-8")
+    for _ in range(3):
+        request(port, "POST", "/api/diagnose", body=body, headers={"Content-Type": "application/json"})
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("POST", "/api/report", body=body, headers={"Content-Type": "application/json"})
+    response = conn.getresponse()
+    html = response.read().decode("utf-8")
+    assert response.status == 200
+    assert "历史对照" in html
+    assert "报障工单" in html
+    conn.close()

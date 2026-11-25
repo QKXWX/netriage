@@ -18,6 +18,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import notify
+
 USER_AGENT = "netriage-probe"
 
 
@@ -241,11 +243,17 @@ def diagnose_remote(server, payload, timeout=30.0, save=True):
 
 
 def watch(server, interval=600, count=0, plan=None, download_mb=4.0, upload_mb=2.0,
-          ping_count=8, load_cap_mb=16.0, out=None, sleep=None):
-    """定时复测。count=0 表示一直跑到 Ctrl-C。返回每轮结果列表。"""
+          ping_count=8, load_cap_mb=16.0, out=None, sleep=None,
+          webhook=None, alert_health=60, alert_cooldown=1800):
+    """定时复测。count=0 表示一直跑到 Ctrl-C。返回每轮结果列表。
+
+    webhook 非空时，健康分 <= alert_health 的轮次会外发一次告警；
+    alert_cooldown 是两次告警的最小间隔秒数，避免整晚刷屏。
+    """
     sleep = sleep or time.sleep
     rounds = []
     finished = 0
+    last_alert = 0.0
     try:
         while True:
             started = time.time()
@@ -281,6 +289,16 @@ def watch(server, interval=600, count=0, plan=None, download_mb=4.0, upload_mb=2
                     out.write(json.dumps({"id": answer.get("id"), "result": result, "measure": measure},
                                          ensure_ascii=False) + "\n")
                     out.flush()
+                if webhook and result.get("health") is not None \
+                        and result["health"] <= alert_health \
+                        and (time.time() - last_alert) >= alert_cooldown:
+                    try:
+                        status = notify.send(webhook, result, measure)
+                    except Exception as exc:               # 告警失败不能终止看守
+                        print("告警发送失败：%s" % exc, flush=True)
+                    else:
+                        last_alert = time.time()
+                        print("已推送告警（HTTP %s）" % status, flush=True)
             finished += 1
             if count and finished >= count:
                 break
